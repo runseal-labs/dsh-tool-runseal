@@ -1,5 +1,7 @@
 # dsh-tool-runseal
 
+English | [中文](README.zh.md)
+
 A standalone [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin: replaces the built-in sandbox with [RunSeal](https://github.com/runseal-labs/runseal) — an OS-native, policy-governed execution environment with enforceable filesystem, process, resource, and network boundaries, plus structured audit events and environment-credential scrubbing.
 
 Fully out-of-tree: depends only on published dsh base packages. Registers as `ctx.sandbox`, so every existing sandbox consumer (bash, jobs, fs) confines through RunSeal automatically.

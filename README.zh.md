@@ -1,5 +1,7 @@
 # dsh-tool-runseal
 
+[English](README.md) | 中文
+
 一个独立的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：用 [RunSeal](https://github.com/runseal-labs/runseal) 替换内置沙箱 —— 一个 OS 原生、策略驱动的执行环境，具备可强制执行的 filesystem / process / resource / network 边界，以及结构化审计事件和环境凭据擦除。
 
 完全独立于仓库（out-of-tree）：只依赖已发布的 dsh 基础包。注册为 `ctx.sandbox`，因此所有现有沙箱消费者（bash、jobs、fs）都会自动通过 RunSeal 执行受限命令。
