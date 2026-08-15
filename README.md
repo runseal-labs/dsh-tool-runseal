@@ -66,6 +66,7 @@ RunSeal takes over `ctx.sandbox`. Patch the base bundle's `sandbox-local` row ou
 | `networkMode` | `unmanaged` | Network policy: `unmanaged`, `disabled`, or `proxy`. |
 | `maxStdinBytes` | `65536` | Maximum stdin bytes for the `bytes` mode (runseal cap). |
 | `timeoutMs` | `600000` | Default per-execution timeout in ms. |
+| `autoSetup` | `true` | On Windows, automatically run `runseal setup windows-sandbox --elevate` for the workspace when a confined execution fails because setup is missing, then retry once. The elevation prompts the user through UAC once. |
 
 ## How it works
 
@@ -80,7 +81,7 @@ When the consumer spawns it, the wrapper starts `runseal rpc --stdio`, sends one
 ## Known Limitations and Deferred Work
 
 - **stdin is not streamed** — RunSeal's `execute` accepts `stdin: { mode: 'bytes' | 'file' }`, not an interactive stream. The wrapper drains consumer stdin; long-lived interactive commands (REPLs) are not supported yet.
-- **Windows setup required for confined modes** — `read-only` / `workspace-write` need `runseal setup windows-sandbox` once; until then those modes fail closed.
+- **Windows confined-mode setup is automatic** — with `autoSetup` (default on), the first confined execution in a workspace triggers `runseal setup windows-sandbox --elevate` (one UAC prompt) and retries; no manual setup command needed. Turn it off if you prefer to run setup yourself.
 - **Single provider at a time** — `ctx.sandbox` accepts one provider; switching from `sandbox-local` requires disabling its row (the patch above does this).
 - **No fallback chain** — unlike `sandbox-local` (bwrap→Landlock→Seatbelt→ACL), this provider does not chain to other runners; runseal must be usable or the call fails closed.
 

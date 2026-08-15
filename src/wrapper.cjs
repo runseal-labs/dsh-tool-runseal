@@ -32,6 +32,11 @@ const finish = (code) => {
   // events remain only for the exit code and as a fallback when the result lacks
   // output fields (e.g. output truncation).
   let resultReceived = false
+  // Auto-setup: when the execution fails because Windows sandbox setup is missing,
+  // run `runseal setup windows-sandbox --cwd <ws> --elevate` (prompts UAC once) and
+  // retry the execution. Mirrors the manual first-run flow.
+  let setupAttempted = false
+
   child.stdout.on('data', (chunk) => {
     const text = chunk.toString('utf8')
     for (const line of text.split('\n')) {
@@ -57,6 +62,25 @@ const finish = (code) => {
         finish(exitCode)
       } else if (message.id === 1 && message.error) {
         const data = message.error.data ?? {}
+        const code = typeof data.code === 'string' ? data.code : ''
+        if (spec.autoSetup && !setupAttempted && code === 'BACKEND_UNAVAILABLE' && process.platform === 'win32') {
+          setupAttempted = true
+          process.stderr.write('runseal: windows sandbox setup missing; requesting elevation...\n')
+          const setup = spawn(executable, ['setup', 'windows-sandbox', '--cwd', spec.cwd, '--elevate'], {
+            stdio: 'ignore',
+          })
+          setup.on('exit', (setupCode) => {
+            if (setupCode !== 0) {
+              process.stderr.write(`runseal: setup failed with exit code ${String(setupCode)}\n`)
+              finish(2)
+              return
+            }
+            // Retry the execution once after setup completed.
+            child.kill()
+            startExecution()
+          })
+          return
+        }
         process.stderr.write(`runseal: ${data.reason ?? message.error.message}\n`)
         finish(2)
       }
@@ -77,17 +101,20 @@ process.stdin.on('data', (chunk) => {
   void chunk
 })
 
-child.stdin.write(JSON.stringify({
-  jsonrpc: '2.0',
-  id: 1,
-  method: 'execute',
-  params: {
-    command: spec.argv,
-    cwd: spec.cwd,
-    policy: spec.policy,
-    ...spec.network ? { network: spec.network } : {},
-    ...spec.timeoutMs ? { timeout_ms: spec.timeoutMs } : {},
-  },
-}) + '\n')
+const startExecution = () => {
+  child.stdin.write(JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'execute',
+    params: {
+      command: spec.argv,
+      cwd: spec.cwd,
+      policy: spec.policy,
+      ...spec.network ? { network: spec.network } : {},
+      ...spec.timeoutMs ? { timeout_ms: spec.timeoutMs } : {},
+    },
+  }) + '\n')
+  setTimeout(() => child.stdin.end(), 100)
+}
 
-setTimeout(() => child.stdin.end(), 100)
+startExecution()

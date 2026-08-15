@@ -66,6 +66,7 @@ RunSeal 接管 `ctx.sandbox`。把 base bundle 的 `sandbox-local` 行禁用，�
 | `networkMode` | `unmanaged` | 网络策略：`unmanaged`、`disabled` 或 `proxy`。 |
 | `maxStdinBytes` | `65536` | `bytes` 模式的 stdin 上限（runseal 限制）。 |
 | `timeoutMs` | `600000` | 单次执行默认超时（毫秒）。 |
+| `autoSetup` | `true` | Windows 上，受限执行因缺少 setup 失败时，自动为该 workspace 执行 `runseal setup windows-sandbox --elevate`（弹一次 UAC 让用户确认）并重试一次。 |
 
 ## 工作原理
 
@@ -80,7 +81,7 @@ RunSeal 接管 `ctx.sandbox`。把 base bundle 的 `sandbox-local` 行禁用，�
 ## 已知限制与待办
 
 - **stdin 不流式** —— RunSeal 的 `execute` 接受 `stdin: { mode: 'bytes' | 'file' }`，不支持交互式流。wrapper 会排空消费者 stdin；长期交互命令（REPL）暂不支持。
-- **Windows 受限模式需要 setup** —— `read-only` / `workspace-write` 需要执行一次 `runseal setup windows-sandbox`；在此之前这些模式会 fail closed。
+- **Windows 受限模式的 setup 是自动的** —— `autoSetup`（默认开启）会在某个 workspace 的第一次受限执行时自动触发 `runseal setup windows-sandbox --elevate`（弹一次 UAC 让用户确认）并重试，无需手动敲命令。如想自己管理 setup，关闭该选项即可。
 - **同一时刻一个 provider** —— `ctx.sandbox` 只接受一个 provider；从 `sandbox-local` 切换需要禁用它的行（上面的 patch 已做）。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
 

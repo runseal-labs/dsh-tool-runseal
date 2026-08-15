@@ -41,6 +41,13 @@ export interface Config extends Omit<EngineConfig, 'args'> {
   args?: string[]
   /** Default per-execution timeout in ms (default 600000). */
   timeoutMs?: number
+  /**
+   * On Windows, automatically run `runseal setup windows-sandbox --elevate` for
+   * the workspace when a confined execution fails because setup is missing or
+   * stale, then retry once. The elevation prompts the user through UAC.
+   * Default `true`.
+   */
+  autoSetup?: boolean
 }
 
 /** Schemastery config schema validated by the Cordis loader. */
@@ -50,6 +57,7 @@ export const Config: z<Config> = z.object({
   networkMode: z.union([z.const('unmanaged'), z.const('disabled'), z.const('proxy')]).default('unmanaged'),
   maxStdinBytes: z.number().default(64 * 1024),
   timeoutMs: z.number().default(600_000),
+  autoSetup: z.boolean().default(true),
 })
 
 /** The wrapper's stable failure prefix (its `runseal: <reason>` stderr line). */
@@ -76,7 +84,8 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error('dsh-tool-runseal: timeoutMs must be a positive integer')
   }
 
-  const provider = new RunsealSandboxProvider(ctx, resolved, timeoutMs)
+  const autoSetup = config.autoSetup ?? true
+  const provider = new RunsealSandboxProvider(ctx, resolved, timeoutMs, autoSetup)
   void provider
 }
 
@@ -97,6 +106,7 @@ export class RunsealSandboxProvider extends SandboxProvider {
     ctx: Context,
     private readonly config: ReturnType<typeof resolveEngineConfig>,
     private readonly timeoutMs: number,
+    private readonly autoSetup: boolean,
   ) {
     super(ctx)
     this.engine = new RunsealEngine(config, undefined)
@@ -123,6 +133,7 @@ export class RunsealSandboxProvider extends SandboxProvider {
       policy: policyId,
       network: this.config.networkMode,
       timeoutMs: this.timeoutMs,
+      autoSetup: this.autoSetup,
     }
     return {
       argv: [process.execPath, wrapperPath(), JSON.stringify(spec)],

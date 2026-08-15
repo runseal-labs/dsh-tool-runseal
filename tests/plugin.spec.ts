@@ -74,6 +74,7 @@ describe('RunsealSandboxProvider confine', () => {
       ctx,
       { command: 'runseal', args: [], networkMode: 'unmanaged', maxStdinBytes: 65536 },
       600_000,
+      true,
     ) }
   }
 
@@ -92,6 +93,7 @@ describe('RunsealSandboxProvider confine', () => {
       cwd: 'C:\\workspace',
       policy: 'read-only',
       network: 'unmanaged',
+      autoSetup: true,
     })
     expect(confined.enforcement).toBe('full')
     expect(confined.denialSignatures).toContain('BACKEND_UNAVAILABLE')
