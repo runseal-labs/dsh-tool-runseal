@@ -2,16 +2,23 @@
   "name": "dsh-tool-runseal",
   "version": "0.1.0",
   "description": "RunSeal sandbox provider plugin for DeepSeek Harness (dsh) — OS-native policy enforcement for bash and subprocess execution via runseal rpc",
-  "private": true,
   "type": "module",
   "main": "lib/index.js",
-  "types": "lib/types/index.d.ts",
+  "types": "lib/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
-  "files": ["lib"],
+  "files": [
+    "lib",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
   "license": "MIT",
   "engines": {
     "node": "^22.19 || >=24"
@@ -42,5 +49,9 @@
     "oxlint": "^0.16.0",
     "typescript": "^5.9.0",
     "vitest": "^3.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/runseal-labs/dsh-tool-runseal.git"
   }
 }
