@@ -97,7 +97,7 @@ describe('RunsealSandboxProvider confine', () => {
     })
     expect(confined.enforcement).toBe('full')
     expect(confined.denialSignatures).toContain('BACKEND_UNAVAILABLE')
-    expect(confined.runnerFailureRules[0].fatalSignatures).toEqual(['runseal: '])
+    expect(confined.runnerFailureRules[0]!.fatalSignatures).toEqual(['runseal: '])
   })
 
   it('maps workspace-write mode', () => {
