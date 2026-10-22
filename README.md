@@ -46,10 +46,10 @@ RunSeal takes over `ctx.sandbox` and `ctx.subprocess`. Disable both local provid
 
 ```yaml
 # cordis.patch.yml — replace the built-in local sandbox with RunSeal
-- id: sandbox-local
+- id: sandbox
   disabled: true
 
-- id: subprocess-local
+- id: subprocess
   disabled: true
 
 - insert:
@@ -99,7 +99,7 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 - **Existing abandoned gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. Hard host termination still cannot guarantee graceful cleanup.
 - **Platform verification** — native integration was exercised on Windows. macOS/Linux execution and UAC setup have not been exercised by this adaptation.
 - **Setup** — complete Windows setup before mounting the subprocess provider. It never performs automatic elevation.
-- **Single provider per service** — disable both `sandbox-local` and `subprocess-local` as shown above.
+- **Single provider per service** — disable both `sandbox` and `subprocess` as shown above.
 - **No fallback chain** — unlike `sandbox-local` (bwrap→Landlock→Seatbelt→ACL), this provider does not chain to other runners; runseal must be usable or the call fails closed.
 
 ## Development

@@ -46,10 +46,10 @@ RunSeal 接管 `ctx.sandbox` 和 `ctx.subprocess`。禁用两个本地 provider�
 
 ```yaml
 # cordis.patch.yml —— 用 RunSeal 替换内置本地沙箱
-- id: sandbox-local
+- id: sandbox
   disabled: true
 
-- id: subprocess-local
+- id: subprocess
   disabled: true
 
 - insert:
@@ -99,7 +99,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 - **已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。宿主被强制结束仍无法保证优雅清理。
 - **平台验证范围** —— 本次在 Windows 做了原生集成验证；未运行 macOS/Linux 实测和 UAC setup。
 - **Setup** —— 挂载 subprocess provider 前完成 Windows setup；provider 不自动提权。
-- **每个服务只能挂载一个 provider** —— 按上面的配置同时禁用 `sandbox-local` 和 `subprocess-local`。
+- **每个服务只能挂载一个 provider** —— 按上面的配置同时禁用 `sandbox` 和 `subprocess`。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
 
 ## 开发
