@@ -87,6 +87,30 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 - **每个服务只能挂载一个 provider** —— bundle 自动禁用 `sandbox` 和 `subprocess`。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
 
+## Windows 页面验收（2026-10-23）
+
+使用未修改的 dsh master（`687f282e86`）、RunSeal 0.2.0（`ee871b0`）和已正式安装到 Web profile 的插件（`3630495`），从 dsh 页面完成两轮真实命令验收：
+
+1. 在页面选择访问模式，执行输出开始标记、等待 120 秒、输出结束标记的 PowerShell 命令。
+2. 确认命令正在执行后，点击页面“停止生成”中途取消。
+3. 在同一会话、同一访问模式中执行一条输出标记的短命令；两轮均未重启 dsh，未手动修复执行门禁，也未提权。
+
+| 页面模式 | RunSeal 策略 | 取消结果 | 再次执行结果 |
+|---|---|---|---|
+| 完全权限 | `danger-full-access`，`sandbox.enforced: false` | 约 12 秒后取消；`EXECUTION_CANCELLED`，`cleanup_complete: true` | 输出 `RUNSEAL_UI_RETRY_20261023_OK`，退出码 0，清理完成 |
+| 工作区内修改 | `workspace-write`，`sandbox.enforced: true` | 约 9 秒后取消；`EXECUTION_CANCELLED`，`cleanup_complete: true` | 输出 `RUNSEAL_RESTRICTED_RETRY_OK`，退出码 0，清理完成 |
+
+完全权限轮核对了真实进程链 `dsh → runseal.exe rpc → pwsh.exe`；工作区内修改轮的审计确认 `restricted-local-process` 边界和 `low-privilege` 身份。两轮取消后，所记录的 RunSeal owner 与命令进程均已退出。再次执行的输出同时在页面原始工具结果与 RunSeal 完成记录中核对（审计记录输出字节数，不保存输出正文）。
+
+本机审计文件位于执行工作区的 `.runseal/audit/`，未随仓库发布。对应记录为：
+
+| 模式 | 取消记录 | 再次执行记录 |
+|---|---|---|
+| 完全权限 | `sess_1a165f70d4c_4fb0_0.jsonl` | `sess_1a165f762d6_125c_0.jsonl` |
+| 工作区内修改 | `sess_1a165f9a3cd_ab54_0.jsonl` | `sess_1a165f9f5da_2ca8_0.jsonl` |
+
+上述结果验证 Windows 页面正常取消后的清理及再次执行；完全权限轮不代表沙箱隔离验证。页面命令没有写入文件，未在这两轮中重复测试文件写入边界、宿主强杀或其他平台。
+
 ## 开发
 
 ```bash

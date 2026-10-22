@@ -87,6 +87,30 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 - **Single provider per service** — the bundle disables both `sandbox` and `subprocess`.
 - **No fallback chain** — unlike `sandbox-local` (bwrap→Landlock→Seatbelt→ACL), this provider does not chain to other runners; runseal must be usable or the call fails closed.
 
+## Windows UI acceptance (2026-10-23)
+
+Two real command flows were exercised through the dsh Web UI using unmodified dsh master (`687f282e86`), RunSeal 0.2.0 (`ee871b0`), and the plugin installed as a Web profile bundle (`3630495`):
+
+1. Select the access mode in the UI and run a PowerShell command that prints a start marker, sleeps for 120 seconds, then prints an end marker.
+2. Confirm execution has started, then cancel midway with the UI's Stop generation button.
+3. Run a short marker command in the same conversation and access mode. Neither round required restarting dsh, manually repairing execution gates, or elevating permissions.
+
+| UI mode | RunSeal policy | Cancellation result | Subsequent execution |
+|---|---|---|---|
+| Full access | `danger-full-access`, `sandbox.enforced: false` | Cancelled after about 12 seconds; `EXECUTION_CANCELLED`, `cleanup_complete: true` | Printed `RUNSEAL_UI_RETRY_20261023_OK`; exit code 0, cleanup complete |
+| Workspace write | `workspace-write`, `sandbox.enforced: true` | Cancelled after about 9 seconds; `EXECUTION_CANCELLED`, `cleanup_complete: true` | Printed `RUNSEAL_RESTRICTED_RETRY_OK`; exit code 0, cleanup complete |
+
+The full-access round verified the actual process chain `dsh → runseal.exe rpc → pwsh.exe`. The workspace-write audit confirmed a `restricted-local-process` boundary and `low-privilege` identity. In both rounds, the recorded RunSeal owner and command processes had exited after cancellation. Subsequent execution was checked against the UI's raw tool output and RunSeal completion records (the audit records output byte counts, not output text).
+
+Local audit files remain under the execution workspace's `.runseal/audit/`; they are not distributed with this repository:
+
+| Mode | Cancellation record | Subsequent execution record |
+|---|---|---|
+| Full access | `sess_1a165f70d4c_4fb0_0.jsonl` | `sess_1a165f762d6_125c_0.jsonl` |
+| Workspace write | `sess_1a165f9a3cd_ab54_0.jsonl` | `sess_1a165f9f5da_2ca8_0.jsonl` |
+
+These results cover cleanup and successful subsequent execution after normal UI cancellation on Windows. The full-access round does not validate sandbox isolation. The UI commands did not write files; these two rounds did not repeat filesystem-boundary tests or exercise forced host termination or other platforms.
+
 ## Development
 
 ```bash
