@@ -1,14 +1,16 @@
 /**
  * RunSeal execution engine: maps dsh sandbox policies onto runseal RPC
- * `execute` requests and interprets the event stream. One persistent RPC child
- * serves every call; each execution produces `execution.stdout` /
+ * `execute` requests and interprets the event stream. One RPC child per execution
+ * owns its lifecycle; each execution produces `execution.stdout` /
  * `execution.stderr` events (base64 payloads) and a final result carrying
  * `exit_code`/signal/truncation. Cancellation maps to `cancelExecution`.
  * @module dsh-tool-runseal/engine
  */
 
+import { StringDecoder } from 'node:string_decoder'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { RunsealRpcClient } from './rpc-client.ts'
+import { RpcError, RunsealRpcClient } from './rpc-client.ts'
+import type { RpcErrorData } from './rpc-client.ts'
 
 /** How completely the runseal backend enforces a policy on this host. */
 export type RunsealEnforcement = 'full' | 'partial'
@@ -75,24 +77,12 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
  * the request's result while assembling streamed events into the outcome.
  */
 export class RunsealEngine {
-  private client: RunsealRpcClient | undefined
+  private readonly active = new Map<string, RunsealRpcClient>()
 
   constructor(
     private readonly config: ResolvedEngineConfig,
     private readonly signal: AbortSignal | undefined,
   ) {}
-
-  private ensureClient(): RunsealRpcClient {
-    if (this.client !== undefined) return this.client
-    this.client = new RunsealRpcClient(
-      { command: this.config.command, args: this.config.args, ...this.signal === undefined ? {} : { signal: this.signal } },
-      () => {
-        // Stream events are captured per-execution by the awaiting request;
-        // unassociated notifications are dropped.
-      },
-    )
-    return this.client
-  }
 
   /**
    * Run one command under a runseal policy.
@@ -110,6 +100,10 @@ export class RunsealEngine {
     stdin?: Uint8Array,
     timeoutMs?: number,
   ): Promise<RunsealExecuteResult> {
+    if (stdin && stdin.byteLength > this.config.maxStdinBytes) throw new Error('runseal stdin exceeds maxStdinBytes')
+    let executionId: string | undefined
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
     const captured: CapturedOutput = {
       stdout: '',
       stderr: '',
@@ -123,10 +117,10 @@ export class RunsealEngine {
       (event) => {
         switch (event.type) {
           case 'execution.stdout':
-            captured.stdout += decodeEventData(event)
+            captured.stdout += stdoutDecoder.write(decodeEventData(event))
             break
           case 'execution.stderr':
-            captured.stderr += decodeEventData(event)
+            captured.stderr += stderrDecoder.write(decodeEventData(event))
             break
           case 'execution.finished':
             captured.exitCode = typeof event.exit_code === 'number' ? event.exit_code : undefined
@@ -150,18 +144,23 @@ export class RunsealEngine {
           : {},
         ...timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {},
       }
-      const result = await client.request('execute', params) as Record<string, unknown>
+      const result = await client.execute(params, id => { executionId = id; this.active.set(id, client) }) as Record<string, unknown>
+      if (result.status === 'failed' || result.error) {
+        const data = result.error as RpcErrorData | undefined
+        throw new RpcError(data?.reason ?? 'runseal execution failed', data ?? { code: 'EXECUTION_FAILED', reason: 'execution failed' })
+      }
       // The result carries the complete output even if events were dropped;
       // prefer the result's authoritative fields over event assembly.
       return {
         exitCode: typeof result.exit_code === 'number' ? result.exit_code : (captured.exitCode ?? 1),
         signal: typeof result.signal === 'string' ? result.signal : (captured.signal ?? null),
-        stdout: typeof result.stdout === 'string' ? result.stdout : captured.stdout,
-        stderr: typeof result.stderr === 'string' ? result.stderr : captured.stderr,
+        stdout: typeof result.stdout === 'string' ? result.stdout : captured.stdout + stdoutDecoder.end(),
+        stderr: typeof result.stderr === 'string' ? result.stderr : captured.stderr + stderrDecoder.end(),
         outputTruncated: result.output_truncated === true || captured.outputTruncated,
         executionId: typeof result.execution_id === 'string' ? result.execution_id : 'unknown',
       }
     } finally {
+      if (executionId) this.active.delete(executionId)
       client.destroy()
     }
   }
@@ -189,27 +188,16 @@ export class RunsealEngine {
 
   /** Cancel one execution by id. */
   async cancel(executionId: string): Promise<void> {
-    const client = new RunsealRpcClient(
-      { command: this.config.command, args: this.config.args, ...this.signal === undefined ? {} : { signal: this.signal } },
-      () => undefined,
-    )
-    try {
-      await client.request('cancelExecution', { execution_id: executionId })
-    } finally {
-      client.destroy()
-    }
+    const client = this.active.get(executionId)
+    if (!client) throw new Error(`runseal execution is not active: ${executionId}`)
+    await client.request('cancelExecution', { execution_id: executionId })
   }
 }
 
 /** Decode an `execution.stdout`/`execution.stderr` event's base64 payload. */
-function decodeEventData(event: Record<string, unknown>): string {
+function decodeEventData(event: Record<string, unknown>): Buffer {
   const data = typeof event.data === 'string' ? event.data : ''
-  if (!data.startsWith('base64:')) return data
-  try {
-    return Buffer.from(data.slice('base64:'.length), 'base64').toString('utf8')
-  } catch {
-    return ''
-  }
+  return data.startsWith('base64:') ? Buffer.from(data.slice(7), 'base64') : Buffer.from(data)
 }
 
 export { DEFAULT_MAX_OUTPUT_BYTES }

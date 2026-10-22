@@ -82,9 +82,9 @@ describe('RunsealSandboxProvider confine', () => {
     return { mode, workspaceRoot: 'C:\\workspace' }
   }
 
-  it('wraps argv with the node wrapper and runseal policy spec', () => {
+  it('wraps argv with the node wrapper and runseal policy spec', async () => {
     const { sandbox } = mount()
-    const confined = sandbox.confine(['bash', '-c', 'echo hi'], policy('read-only'))
+    const confined = await sandbox.confine(['bash', '-c', 'echo hi'], policy('read-only'))
     expect(confined.argv[0]).toBe(process.execPath)
     expect(confined.argv[1]).toContain('wrapper.cjs')
     const spec = JSON.parse(confined.argv[2] as string)
@@ -100,9 +100,9 @@ describe('RunsealSandboxProvider confine', () => {
     expect(confined.runnerFailureRules[0]!.fatalSignatures).toEqual(['runseal: '])
   })
 
-  it('maps workspace-write mode', () => {
+  it('maps workspace-write mode', async () => {
     const { sandbox } = mount()
-    const confined = sandbox.confine(['cmd', '/c', 'dir'], policy('workspace-write'))
+    const confined = await sandbox.confine(['cmd', '/c', 'dir'], policy('workspace-write'))
     const spec = JSON.parse(confined.argv[2] as string)
     expect(spec.policy).toBe('workspace-write')
   })

@@ -12,6 +12,8 @@ import type { Readable } from 'node:stream'
 
 /** One in-flight request awaiting its response. */
 interface PendingRequest {
+  execution?: boolean
+  onAccepted?: (executionId: string) => void
   resolve: (result: unknown) => void
   reject: (error: Error) => void
 }
@@ -51,7 +53,9 @@ export interface RpcClientOptions {
   /** Maximum buffered stdout line length before truncation. Default 16 MiB. */
   maxLineBytes?: number
   /** Extra environment entries for the child. Default `{}`. */
-  env?: Record<string, string>
+  env?: NodeJS.ProcessEnv
+  /** Use env as the complete transport environment instead of inheriting the host. */
+  replaceEnv?: boolean
 }
 
 /**
@@ -64,6 +68,10 @@ export class RunsealRpcClient {
   private child: ChildProcess | undefined
   private buffer = Buffer.alloc(0)
   private readonly pending = new Map<number, PendingRequest>()
+  private readonly executions = new Map<string, PendingRequest>()
+  private readonly abort = () => this.destroy()
+  private destroyed = false
+  private closed: Promise<void> = Promise.resolve()
   private nextId = 1
   private readonly maxLineBytes: number
   private readonly signal: AbortSignal | undefined
@@ -75,9 +83,7 @@ export class RunsealRpcClient {
   ) {
     this.maxLineBytes = options.maxLineBytes ?? 16 * 1024 * 1024
     this.signal = options.signal
-    this.signal?.addEventListener('abort', () => {
-      this.destroy()
-    }, { once: true })
+    this.signal?.addEventListener('abort', this.abort, { once: true })
   }
 
   /**
@@ -87,10 +93,21 @@ export class RunsealRpcClient {
    * @returns the result value.
    */
   async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    return this.send(method, params)
+  }
+
+  /** Await the terminal event, rather than treating an admission receipt as completion. */
+  async execute(params: Record<string, unknown>, onAccepted?: (executionId: string) => void): Promise<unknown> {
+    return this.send('execute', params, true, onAccepted)
+  }
+
+  private async send(method: string, params: Record<string, unknown>, execution = false, onAccepted?: (executionId: string) => void): Promise<unknown> {
+    if (this.destroyed) throw new Error('runseal rpc client destroyed')
+    this.signal?.throwIfAborted()
     const id = this.nextId++
     const child = this.ensureChild()
     const response = new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      this.pending.set(id, { resolve, reject, execution, ...onAccepted ? { onAccepted } : {} })
     })
     if (child.stdin === null) {
       this.pending.delete(id)
@@ -100,43 +117,54 @@ export class RunsealRpcClient {
     return response
   }
 
-  /** Kill the child and reject every in-flight request. */
+  /** Close the connection and reject every in-flight request; RunSeal owns cleanup. */
   destroy(): void {
-    for (const pending of this.pending.values()) {
-      pending.reject(new Error('runseal rpc client destroyed'))
-    }
-    this.pending.clear()
-    this.child?.kill()
+    this.destroyed = true
+    this.signal?.removeEventListener('abort', this.abort)
+    this.rejectAll(new Error('runseal rpc client destroyed'))
+    // EOF cancels owned executions and allows native cleanup before process exit.
+    this.child?.stdin?.end()
     this.child = undefined
+    this.buffer = Buffer.alloc(0)
+  }
+
+  /** End RPC input, then wait for the owner process to finish native cleanup and exit. */
+  async close(): Promise<void> {
+    this.destroy()
+    await this.closed
   }
 
   private ensureChild(): ChildProcess {
     if (this.child !== undefined && this.child.exitCode === null) return this.child
     this.child = spawn(this.options.command, [...(this.options.args ?? []), 'rpc', '--stdio'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      ...this.options.env !== undefined && Object.keys(this.options.env).length > 0
-        ? { env: { ...process.env, ...this.options.env } }
+      ...this.options.env !== undefined
+        ? { env: this.options.replaceEnv ? this.options.env : { ...process.env, ...this.options.env } }
         : {},
     })
-    const stdout = this.child.stdout as Readable
-    stdout.on('data', (chunk: Buffer<ArrayBuffer>) => this.onData(chunk))
+    const child = this.child
+    this.closed = new Promise(resolve => child.once('close', () => resolve()))
+    const stdout = child.stdout as Readable
+    stdout.on('data', (chunk: Buffer<ArrayBuffer>) => { if (this.child === child) this.onData(chunk) })
     this.child.stderr?.on('data', (_chunk) => {
       // runseal writes diagnostics to stderr; keep the stream drained so the
       // child never blocks on a full stderr pipe.
     })
-    this.child.on('error', (error) => {
-      for (const pending of this.pending.values()) {
-        pending.reject(error)
-      }
-      this.pending.clear()
-    })
-    this.child.on('exit', () => {
-      for (const pending of this.pending.values()) {
-        pending.reject(new Error('runseal rpc child exited'))
-      }
-      this.pending.clear()
+    child.stdin?.on('error', error => { if (this.child === child) this.rejectAll(error) })
+    child.on('error', error => { if (this.child === child) this.rejectAll(error) })
+    child.on('close', () => {
+      if (this.child !== child) return
+      this.rejectAll(new Error('runseal rpc child exited'))
+      this.child = undefined
+      this.buffer = Buffer.alloc(0)
     })
     return this.child
+  }
+
+  private rejectAll(error: Error): void {
+    for (const request of [...this.pending.values(), ...this.executions.values()]) request.reject(error)
+    this.pending.clear()
+    this.executions.clear()
   }
 
   private onData(chunk: Buffer<ArrayBuffer>): void {
@@ -146,20 +174,35 @@ export class RunsealRpcClient {
       const line = this.buffer.subarray(0, newline)
       this.buffer = this.buffer.subarray(newline + 1)
       if (line.length === 0) continue
-      if (line.length > this.maxLineBytes) continue
+      if (line.length > this.maxLineBytes) return this.protocolError('RPC frame exceeds limit')
       let message: Record<string, unknown>
       try {
         message = JSON.parse(line.toString('utf8')) as Record<string, unknown>
       } catch {
-        continue
+        return this.protocolError('invalid JSON-RPC frame')
       }
+      if (typeof message !== 'object' || message === null || Array.isArray(message)) return this.protocolError('invalid JSON-RPC message')
       this.dispatch(message)
     }
+    if (this.buffer.length > this.maxLineBytes) this.protocolError('RPC frame exceeds limit')
+  }
+
+  private protocolError(reason: string): void {
+    this.rejectAll(new Error(reason))
+    this.destroy()
   }
 
   private dispatch(message: Record<string, unknown>): void {
     if (message.method === 'event' && typeof message.params === 'object' && message.params !== null) {
-      this.onEvent(message.params as Record<string, unknown>)
+      const event = message.params as Record<string, unknown>
+      this.onEvent(event)
+      const executionId = typeof event.execution_id === 'string' ? event.execution_id : ''
+      const execution = this.executions.get(executionId)
+      if (execution && (event.type === 'execution.finished' || event.type === 'execution.failed')) {
+        this.executions.delete(executionId)
+        if (typeof event.result !== 'object' || event.result === null) execution.reject(new Error('terminal event has no result'))
+        else execution.resolve(event.result)
+      }
       return
     }
     const id = typeof message.id === 'number' ? message.id : undefined
@@ -174,6 +217,12 @@ export class RunsealRpcClient {
         (message.error as { message?: string }).message ?? `runseal rpc error ${code}`,
         data ?? { code, reason: 'no details' },
       ))
+      return
+    }
+    const result = message.result as Record<string, unknown> | undefined
+    if (pending.execution && result && (result.status === 'preparing' || result.status === 'running') && typeof result.execution_id === 'string') {
+      this.executions.set(result.execution_id, pending)
+      pending.onAccepted?.(result.execution_id)
       return
     }
     pending.resolve(message.result)

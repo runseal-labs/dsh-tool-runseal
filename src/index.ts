@@ -7,21 +7,22 @@
  * stdout/stderr, and exits with the command's exit code, so existing dsh
  * consumers (bash, jobs, fs) see an ordinary subprocess lifecycle.
  *
- * Policy mapping: dsh `read-only` / `workspace-write` / `danger-full-access`
- * map to the same-named runseal sandbox levels. RunSeal additionally offers
+ * Policy mapping: dsh `read-only` / `workspace-write` map to the same-named
+ * RunSeal sandbox levels. dsh bypasses this seam for `danger-full-access`. RunSeal additionally offers
  * `workspace-contained` (strict) and `network.proxy` for enterprise routing.
  *
  * Depends only on published dsh base packages — fully out-of-tree.
  * @module dsh-tool-runseal
  */
 
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { wrapperPath } from './confinement.ts'
+import { RunsealSubprocessRuntime } from './subprocess.ts'
+export { RunsealSubprocessRuntime } from './subprocess.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { SandboxProvider, SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv, RunnerFailureRule, SandboxEnforcement, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
-import { MODE_TO_POLICY, RunsealEngine, resolveEngineConfig } from './engine.ts'
+import { MODE_TO_POLICY, resolveEngineConfig } from './engine.ts'
 import type { EngineConfig } from './engine.ts'
 
 export { MODE_TO_POLICY, RunsealEngine, resolveEngineConfig } from './engine.ts'
@@ -32,13 +33,15 @@ export type { RpcErrorData, RpcClientOptions } from './rpc-client.ts'
 /** Cordis plugin name for loader diagnostics. */
 export const name = 'dsh-tool-runseal'
 
-/** Services required by this plugin. */
-export const inject = ['sandbox']
+/** This plugin provides sandbox and does not depend on another sandbox provider. */
+export const inject: string[] = []
 
 /** Plugin configuration. */
 export interface Config extends Omit<EngineConfig, 'args'> {
   /** Extra arguments before the `rpc` subcommand. Default `[]`. */
   args?: string[]
+  /** Register the RPC-owned subprocess service. Disable only for sandbox-only integrations. */
+  subprocess?: boolean
   /** Default per-execution timeout in ms (default 600000). */
   timeoutMs?: number
   /**
@@ -53,6 +56,7 @@ export interface Config extends Omit<EngineConfig, 'args'> {
 /** Schemastery config schema validated by the Cordis loader. */
 export const Config: z<Config> = z.object({
   command: z.string().required(),
+  subprocess: z.boolean().default(true),
   args: z.array(String).default([]),
   networkMode: z.union([z.const('unmanaged'), z.const('disabled'), z.const('proxy')]).default('unmanaged'),
   maxStdinBytes: z.number().default(64 * 1024),
@@ -73,7 +77,7 @@ const RUNSEAL_DENIAL_CODES = new Set([
 
 /**
  * Register the RunSeal sandbox provider as `ctx.sandbox`.
- * @param ctx - the plugin context (injects `sandbox`).
+ * @param ctx - the plugin context.
  * @param config - resolved plugin configuration.
  */
 export function apply(ctx: Context, config: Config): void {
@@ -84,23 +88,17 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error('dsh-tool-runseal: timeoutMs must be a positive integer')
   }
 
+  if (config.subprocess !== false) new RunsealSubprocessRuntime(ctx, resolved)
   const autoSetup = config.autoSetup ?? true
   const provider = new RunsealSandboxProvider(ctx, resolved, timeoutMs, autoSetup)
   void provider
 }
 
-/** The wrapper script path (sibling of this compiled module). */
-function wrapperPath(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), 'wrapper.cjs')
-}
-
 /**
- * The RunSeal-backed `ctx.sandbox` implementation. `confine` is synchronous by
- * contract, so it returns the wrapper argv immediately; the wrapper performs
+ * The RunSeal-backed `ctx.sandbox` implementation. `confine` resolves the wrapper argv asynchronously; the wrapper performs
  * the actual RPC execution when the consumer spawns it.
  */
 export class RunsealSandboxProvider extends SandboxProvider {
-  private readonly engine: RunsealEngine
 
   constructor(
     ctx: Context,
@@ -109,7 +107,6 @@ export class RunsealSandboxProvider extends SandboxProvider {
     private readonly autoSetup: boolean,
   ) {
     super(ctx)
-    this.engine = new RunsealEngine(config, undefined)
   }
 
   /**
@@ -118,7 +115,8 @@ export class RunsealSandboxProvider extends SandboxProvider {
    * @param policy - the file-effect policy for this execution.
    * @returns the wrapper argv with runseal enforcement facts.
    */
-  confine(argv: readonly string[], policy: SandboxPolicy): ConfinedArgv {
+  async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
+    signal?.throwIfAborted()
     const policyId = MODE_TO_POLICY[policy.mode]
     if (policyId === undefined) {
       throw new SandboxUnavailableError(policy.mode, `unknown mode ${policy.mode}`)
@@ -128,6 +126,8 @@ export class RunsealSandboxProvider extends SandboxProvider {
 
   private wrap(argv: readonly string[], policy: SandboxPolicy, policyId: string, enforcement: SandboxEnforcement): ConfinedArgv {
     const spec = {
+      command: this.config.command,
+      args: this.config.args,
       argv: [...argv],
       cwd: policy.workspaceRoot,
       policy: policyId,
@@ -136,7 +136,7 @@ export class RunsealSandboxProvider extends SandboxProvider {
       autoSetup: this.autoSetup,
     }
     return {
-      argv: [process.execPath, wrapperPath(), JSON.stringify(spec)],
+      argv: [process.execPath, wrapperPath, JSON.stringify(spec)],
       enforcement,
       denialSignatures: [...RUNSEAL_DENIAL_CODES],
       runnerFailureRules: RUNNER_FAILURE_RULES,

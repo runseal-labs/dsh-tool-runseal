@@ -1,120 +1,177 @@
-/**
- * The confined-execution wrapper spawned by dsh consumers. `confine()` returns
- * `[node, wrapper, <spec>]`; this script runs the command through the runseal RPC
- * `execute`, forwards stdout/stderr events to its own stdio, and exits with the
- * command's exit code — so the caller sees an ordinary subprocess lifecycle.
- *
- * Arguments: `node wrapper.cjs <executable> <spec-json>`
- * The spec JSON carries the argv, cwd, policy id, network mode, and timeout.
- * @module dsh-tool-runseal/wrapper
- */
-
+/** One wrapper process owns one RunSeal RPC connection and execution. */
 const { spawn } = require('node:child_process')
+const { StringDecoder } = require('node:string_decoder')
 
-const [, , executable, specJson] = process.argv
-const spec = JSON.parse(specJson)
+const spec = JSON.parse(process.argv[2])
+let child
+let executionId
+let done = false
+let setupAttempted = false
+let receivedOutput = { stdout: false, stderr: false }
+let nextId = 2
+const pending = new Map()
 
-const child = spawn(executable, ['rpc', '--stdio'], { stdio: ['pipe', 'pipe', 'pipe'] })
-let exited = false
-let exitCode = 1
-
-const finish = (code) => {
-  if (exited) return
-  exited = true
-  process.exitCode = code
-  // Let stdout/stderr buffers flush before the child is reaped; runseal may
-  // still be writing the final result frame.
-  setTimeout(() => child.kill(), 100)
+function send(method, params) {
+  const id = nextId++
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject })
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n')
+  })
 }
 
-// Streamed stdout/stderr events are base64 payloads; the final result carries the
-  // complete output. Use the RESULT's authoritative stdout/stderr (single write);
-  // events remain only for the exit code and as a fallback when the result lacks
-  // output fields (e.g. output truncation).
-  let resultReceived = false
-  // Auto-setup: when the execution fails because Windows sandbox setup is missing,
-  // run `runseal setup windows-sandbox --cwd <ws> --elevate` (prompts UAC once) and
-  // retry the execution. Mirrors the manual first-run flow.
-  let setupAttempted = false
+function finish(code) {
+  if (done) return
+  done = true
+  process.exitCode = code
+  process.stdin.destroy()
+  for (const request of pending.values()) request.reject(new Error('execution ended'))
+  pending.clear()
+  // EOF after terminal completion lets RunSeal perform its own cleanup.
+  child?.stdin.end()
+}
 
-  child.stdout.on('data', (chunk) => {
-    const text = chunk.toString('utf8')
-    for (const line of text.split('\n')) {
-      if (line.trim().length === 0) continue
-      let message
-      try {
-        message = JSON.parse(line)
-      } catch {
-        continue
-      }
-      if (message.method === 'event' && message.params) {
-        const event = message.params
-        if (event.type === 'execution.finished' && typeof event.exit_code === 'number') {
-          exitCode = event.exit_code
-        }
-      } else if (message.id === 1 && message.result) {
-        if (typeof message.result.exit_code === 'number') exitCode = message.result.exit_code
-        if (!resultReceived) {
-          resultReceived = true
-          if (typeof message.result.stdout === 'string') process.stdout.write(message.result.stdout)
-          if (typeof message.result.stderr === 'string') process.stderr.write(message.result.stderr)
-        }
-        finish(exitCode)
-      } else if (message.id === 1 && message.error) {
-        const data = message.error.data ?? {}
-        const code = typeof data.code === 'string' ? data.code : ''
-        if (spec.autoSetup && !setupAttempted && code === 'BACKEND_UNAVAILABLE' && process.platform === 'win32') {
-          setupAttempted = true
-          process.stderr.write('runseal: windows sandbox setup missing; requesting elevation...\n')
-          const setup = spawn(executable, ['setup', 'windows-sandbox', '--cwd', spec.cwd, '--elevate'], {
-            stdio: 'ignore',
-          })
-          setup.on('exit', (setupCode) => {
-            if (setupCode !== 0) {
-              process.stderr.write(`runseal: setup failed with exit code ${String(setupCode)}\n`)
-              finish(2)
-              return
-            }
-            // Retry the execution once after setup completed.
-            child.kill()
-            startExecution()
-          })
-          return
-        }
-        process.stderr.write(`runseal: ${data.reason ?? message.error.message}\n`)
-        finish(2)
+function fail(error, executionFailure = false) {
+  if (done) return
+  process.stderr.write(`runseal${executionFailure ? " execution" : ""}: ${error.code ?? 'RPC_ERROR'}: ${error.reason ?? error.message ?? String(error)}\n`)
+  finish(2)
+}
+
+async function forwardInput() {
+  try {
+    for await (const chunk of process.stdin) {
+      if (done) return
+      const bytes = Buffer.from(chunk)
+      for (let offset = 0; offset < bytes.length; offset += 8192) {
+        if (done) return
+        await send('writeExecutionInput', {
+          execution_id: executionId, stream: 'stdin', encoding: 'base64',
+          data: `base64:${bytes.subarray(offset, offset + 8192).toString('base64')}`,
+        })
       }
     }
-  })
-
-child.stderr.on('data', () => {
-  // drain; runseal diagnostics are not command output
-})
-
-child.on('exit', () => {
-  if (!exited) finish(exitCode)
-})
-
-process.stdin.on('data', (chunk) => {
-  // The wrapper does not forward stdin to the sandboxed command (runseal's
-  // execute stdin is bytes/file based); drain to avoid backpressure.
-  void chunk
-})
-
-const startExecution = () => {
-  child.stdin.write(JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'execute',
-    params: {
-      command: spec.argv,
-      cwd: spec.cwd,
-      policy: spec.policy,
-      ...spec.network ? { network: spec.network } : {},
-      ...spec.timeoutMs ? { timeout_ms: spec.timeoutMs } : {},
-    },
-  }) + '\n')
-  setTimeout(() => child.stdin.end(), 100)
+    if (!done) await send('closeExecutionInput', { execution_id: executionId, stream: 'stdin' })
+  } catch (error) {
+    if (!done) fail(error)
+  }
 }
 
-startExecution()
+function complete(result) {
+  for (const stream of ['stdout', 'stderr']) {
+    if (!receivedOutput[stream] && typeof result[stream] === 'string') process[stream].write(result[stream])
+  }
+  if (result.status === 'failed' || result.error) {
+    fail(result.error ?? { code: 'EXECUTION_FAILED', reason: 'execution failed' }, true)
+  } else {
+    finish(Number.isInteger(result.exit_code) ? result.exit_code : 1)
+  }
+}
+
+function handleError(error) {
+  const setup = error.setup_status
+  if (spec.autoSetup && !setupAttempted && process.platform === 'win32'
+      && setup?.requires_setup === true && !executionId) {
+    setupAttempted = true
+    const oldChild = child
+    oldChild.stdin.end()
+    const setupChild = spawn(spec.command, [...(spec.args ?? []), 'setup', 'windows-sandbox', '--cwd', spec.cwd, '--elevate'], { stdio: 'ignore' })
+    setupChild.on('error', fail)
+    setupChild.on('close', code => {
+      if (done) return
+      if (code !== 0) return fail({ code: 'SETUP_FAILED', reason: `setup exited with ${code}` })
+      start()
+    })
+    return
+  }
+  fail(error)
+}
+
+function start() {
+  if (done) return
+  executionId = undefined
+  receivedOutput = { stdout: false, stderr: false }
+  const rpc = child = spawn(spec.command, [...(spec.args ?? []), 'rpc', '--stdio'], { stdio: ['pipe', 'pipe', 'pipe'] })
+  const decoder = new StringDecoder('utf8')
+  let buffer = ''
+  let retrying = false
+  rpc.stdout.on('data', chunk => {
+    if (done || rpc !== child || retrying) return
+    buffer += decoder.write(chunk)
+    let newline
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      if (!line.trim()) continue
+      if (Buffer.byteLength(line) > 16 * 1024 * 1024) return fail({ code: 'PROTOCOL_ERROR', reason: 'RPC frame exceeds limit' })
+      let message
+      try { message = JSON.parse(line) } catch { return fail({ code: 'PROTOCOL_ERROR', reason: 'invalid JSON-RPC frame' }) }
+      if (!message || typeof message !== 'object' || Array.isArray(message)) return fail({ code: 'PROTOCOL_ERROR', reason: 'invalid JSON-RPC message' })
+      if (message.method === 'event') {
+        const event = message.params
+        if (!event || (executionId && event.execution_id !== executionId)) continue
+        if (event.type === 'execution.stdout' || event.type === 'execution.stderr') {
+          const stream = event.type === 'execution.stdout' ? 'stdout' : 'stderr'
+          if (typeof event.data === 'string') {
+            receivedOutput[stream] = true
+            process[stream].write(event.data.startsWith('base64:') ? Buffer.from(event.data.slice(7), 'base64') : event.data)
+          }
+        } else if (executionId && (event.type === 'execution.finished' || event.type === 'execution.failed')) {
+          if (!event.result || typeof event.result !== 'object') return fail({ code: 'PROTOCOL_ERROR', reason: 'terminal event has no result' })
+          complete(event.result)
+        }
+      } else if (message.id === 1) {
+        if (message.error) {
+          const error = message.error.data ?? message.error
+          retrying = spec.autoSetup && !setupAttempted && process.platform === 'win32' && error.setup_status?.requires_setup === true
+          handleError(error)
+        } else if (message.result) {
+          const result = message.result
+          if (['preparing', 'running'].includes(result.status) && typeof result.execution_id === 'string') {
+            executionId = result.execution_id
+            void forwardInput()
+          } else {
+            complete(result)
+          }
+        }
+      } else {
+        const request = pending.get(message.id)
+        if (request) {
+          pending.delete(message.id)
+          if (message.error) request.reject(message.error.data ?? message.error)
+          else request.resolve(message.result)
+        }
+      }
+      if (done || retrying) return
+    }
+    if (Buffer.byteLength(buffer) > 16 * 1024 * 1024) fail({ code: 'PROTOCOL_ERROR', reason: 'RPC frame exceeds limit' })
+  })
+  rpc.stderr.on('data', () => {})
+  rpc.on('error', fail)
+  rpc.stdin.on('error', error => { if (!done && !retrying) fail(error) })
+  rpc.on('close', () => {
+    if (rpc === child && !done && !retrying) fail({ code: 'RPC_CLOSED', reason: 'connection closed before execution completed' })
+  })
+  // Resolve policy against the workspace, but preserve the caller's actual cwd.
+  void send('explainPolicy', { policy: spec.policy, cwd: spec.cwd, network: spec.network }).then(explained => {
+    if (done || rpc !== child) return
+    const policy = { id: explained.policy_id, sandbox_level: explained.sandbox_level }
+    for (const key of ['filesystem', 'network', 'environment', 'process', 'resources', 'approval']) {
+      if (explained[key] !== undefined) {
+        policy[key] = Object.fromEntries(Object.entries(explained[key]).filter(([, value]) => value !== null))
+      }
+    }
+    if (policy.filesystem) delete policy.filesystem.unrestricted
+    // RunSeal rejects inline read-only policies with empty write roots; use its named profile.
+    rpc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'execute', params: {
+      command: spec.argv, cwd: process.cwd(), policy: spec.policy === 'workspace-write' ? policy : spec.policy, network: spec.network,
+      timeout_ms: spec.timeoutMs, stdin: { mode: 'stream' },
+    } }) + '\n')
+  }).catch(fail)
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    // Disconnect is RunSeal's cancellation boundary, including admission before receipt.
+    finish(signal === 'SIGINT' ? 130 : 143)
+  })
+}
+start()
