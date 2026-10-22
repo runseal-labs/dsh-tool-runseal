@@ -24,6 +24,8 @@
 
 ## 安装
 
+通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.0` 安装发布版 bundle，重启 dsh 后打开「插件 → RunSeal」。RunSeal 可执行文件需要包含 RFC-0022 支持（验证版本 `ee871b0`）；插件不会安装原生可执行文件。
+
 前置：PATH 上有 `runseal` 二进制（或在 `command` 配置里给绝对路径）。Windows / macOS / Linux 的预构建二进制发布在 [runseal releases](https://github.com/runseal-labs/runseal/releases) 页面。
 
 Windows 上受限模式（`read-only`、`workspace-write`）需要先执行一次沙箱 setup：
@@ -38,7 +40,7 @@ runseal setup windows-sandbox --cwd <workspace> --elevate
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.1.1.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.0.tgz
 ```
 
 bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认从 PATH 查找 runseal。需要指定绝对路径时，在 profile 的 cordis.patch.yml 中添加：

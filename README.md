@@ -24,6 +24,8 @@ Adapted against local upstream checkouts: dsh `master` at `687f282e8625c6b8d11ff
 
 ## Install
 
+Install the published bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.0`, then restart dsh and open Plugins → RunSeal. The RunSeal executable must include RFC-0022 support (validated at `ee871b0`); the plugin does not install the native executable.
+
 Prerequisites: a `runseal` binary on PATH (or an absolute `command` path). Prebuilt binaries for Windows / macOS / Linux are published on the [runseal releases](https://github.com/runseal-labs/runseal/releases) page.
 
 On Windows, confined modes (`read-only`, `workspace-write`) require the sandbox setup once:
@@ -38,7 +40,7 @@ Install the built package into the Web profile and add dsh-tool-runseal to dsh.p
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.1.1.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.0.tgz
 ```
 
 The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It resolves runseal on PATH by default. To use an absolute executable path, add this to the profile cordis.patch.yml:
