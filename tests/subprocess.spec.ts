@@ -133,6 +133,34 @@ describe('RunSeal interactive transports', () => {
     } finally { await ctx.fiber.dispose() }
   })
 
+  it('rejects terminal allocation without a native PID', async () => {
+    const ctx = await mount('pty-no-pid')
+    try {
+      await expect(ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+        terminalType: 'xterm', graceMs: 1000 })).rejects.toThrow('native process identity')
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('rejects an accepted interrupt when execution ends without delivery', async () => {
+    const ctx = await mount('pty-unconfirmed')
+    try {
+      const terminal = await ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+        terminalType: 'xterm', graceMs: 1000 })
+      await expect(terminal.signalForeground('SIGINT')).rejects.toThrow('before signal delivery')
+      await terminal.terminate()
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('retains delivery proof when the terminal exits in the same RPC batch', async () => {
+    const ctx = await mount('pty-exit-after-delivery')
+    try {
+      const terminal = await ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+        terminalType: 'xterm', graceMs: 1000 })
+      expect(await terminal.signalForeground('SIGINT')).toBe(12345)
+      await terminal.terminate()
+    } finally { await ctx.fiber.dispose() }
+  })
+
   it('owns terminal startup, input, resize, interrupt and cleanup', async () => {
     const ctx = await mount('pty')
     const signal = new AbortController()
@@ -144,12 +172,18 @@ describe('RunSeal interactive transports', () => {
       await terminal.write('你好')
       await Promise.all([terminal.write('A'.repeat(20000)), terminal.write('B'.repeat(20000))])
       await terminal.resize(100, 30)
-      expect(await terminal.signalForeground('SIGINT')).toBeUndefined()
-      await expect(terminal.signalForeground('SIGKILL')).rejects.toThrow('unsupported')
+      const interrupted = terminal.signalForeground('SIGINT')
+      let delivered = false
+      void interrupted.then(() => { delivered = true })
+      await new Promise(resolve => setTimeout(resolve, 30))
+      expect(delivered).toBe(false)
+      expect(await interrupted).toBe(12345)
+      await expect(terminal.signalForeground('SIGKILL')).rejects.toThrow('refusing')
       expect(await terminal.inspectActivity()).toMatchObject({ state: 'unknown' })
-      expect(await terminal.inspectForeground()).toBeUndefined()
-      expect(terminal.pid).toBeUndefined()
+      expect(await terminal.inspectForeground()).toEqual({ processGroupId: 12345, inputWaiting: false })
+      expect(terminal.pid).toBe(12345)
       await expect.poll(() => output).toContain('你好' + 'A'.repeat(20000) + 'B'.repeat(20000) + 'resizeExecutionsignalExecution')
+      expect(await terminal.signalForeground('SIGTERM')).toBe(12345)
       await terminal.terminate()
       await terminal.done
       await expect(terminal.write('late')).rejects.toThrow('closing')

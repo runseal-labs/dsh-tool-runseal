@@ -4,6 +4,7 @@ const lines = JSON.parse(process.env.FAKE_RUNSEAL_LINES ?? '[]')
 const scenario = process.argv[2]
 const executionId = 'exec_fixture'
 let input = []
+let sequence = 0
 let timer
 const send = message => process.stdout.write(JSON.stringify(message) + '\n')
 const event = (type, extra = {}) => send({ jsonrpc: '2.0', method: 'event', params: { type, execution_id: executionId, ...extra } })
@@ -30,8 +31,8 @@ reader.on('line', line => {
     setTimeout(() => {
       process.stdout.write(receipt.slice(17))
       if (scenario === 'pty-preparing') return
-      event('execution.started')
-      if (scenario === 'pty' || scenario === 'control') return
+      event('execution.started', { process_id: scenario === 'pty-no-pid' ? undefined : 12345 })
+      if (scenario.startsWith('pty') || scenario === 'control') return
       if (['cancel', 'cancel-delayed', 'echo', 'cancel-early'].includes(scenario)) {
         if (scenario !== 'echo') event('execution.stdout', { data: 'base64:UkVBRFk=' })
         return
@@ -56,7 +57,10 @@ reader.on('line', line => {
       terminal()
     }
   } else if (request.method === 'signalExecution' || request.method === 'resizeExecution') {
-    send({ jsonrpc: '2.0', id: request.id, result: { accepted: true } })
+    send({ jsonrpc: '2.0', id: request.id, result: { accepted: true, sequence: ++sequence } })
+    if (request.method === 'signalExecution' && scenario === 'pty-exit-after-delivery') { event('execution.signal_delivered', { sequence, target_process_id: 12345 }); terminal(); return }
+    if (request.method === 'signalExecution' && scenario === 'pty-unconfirmed') { setTimeout(() => terminal(), 40); return }
+    if (request.method === 'signalExecution') { const current = sequence; setTimeout(() => event('execution.signal_delivered', { sequence: current, target_process_id: 12345 }), 80) }
     event('execution.terminal', { data: 'base64:' + Buffer.from(request.method).toString('base64') })
   } else if (request.method === 'cancelExecution') {
     send({ jsonrpc: '2.0', id: request.id, result: { accepted: true } })

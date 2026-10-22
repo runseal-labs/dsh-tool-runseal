@@ -8,7 +8,7 @@ Fully out-of-tree: depends only on published dsh base packages. Registers both `
 
 ## Compatibility
 
-Adapted against local upstream checkouts: dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`), and RunSeal `main` at `8c18b10034be51c15d9fd02efded8d8594a3be9a` (`0.2.0`, protocol v2). RunSeal has no `master` branch. The local native test binary reports `0.2.0-rc.1`; its runtime source is unchanged by the `0.2.0` release commit. Older protocols are not the validation baseline.
+Adapted against local upstream checkouts: dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`), and RunSeal `main` at `8c18b10034be51c15d9fd02efded8d8594a3be9a` (`0.2.0`, protocol v2). RunSeal has no `master` branch. The validated native binary reports `0.2.0` and includes the RFC-0022 transport and terminal identity changes. Older protocols are not the validation baseline.
 
 ## What it provides
 
@@ -94,7 +94,7 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 
 ## Known Limitations and Deferred Work
 
-- **Native interactive I/O** — PTY startup, input, resize and interrupt use RunSeal RPC. Control traffic uses a separate duplex stream at child fd 7. Interrupt returns acceptance without claiming foreground delivery; PID and shell activity remain unknown. Other foreground signals reject explicitly. Terminal termination waits for cleanup and outstanding operations.
+- **Native interactive I/O** — PTY startup, input, resize and interrupt use RunSeal RPC. Control traffic uses a native byte pipe at child fd 7. Input close seals writes without peer EOF; children use message framing and close after their final response. The terminal exposes the actual child PID. Interrupt waits for native Ctrl-C input delivery and returns the Windows console root PID; shell activity remains unknown. Windows SIGTERM cancels and joins the owned console range. SIGKILL of the terminal shell is refused; SIGTSTP and SIGHUP are unsupported. Terminal termination waits for cleanup and outstanding operations.
 - **Coverage** — only commands routed through `ctx.subprocess` are managed. Direct `node:child_process` users bypass the provider.
 - **Existing abandoned gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. Hard host termination still cannot guarantee graceful cleanup.
 - **Platform verification** — native integration was exercised on Windows. macOS/Linux execution and UAC setup have not been exercised by this adaptation.
@@ -113,7 +113,8 @@ pnpm build       # tsc + copies wrapper.cjs into lib/
 
 For native integration, set `RUNSEAL_TEST_BINARY` to an absolute binary path and run `pnpm test`. The opt-in test uses a temporary workspace and `autoSetup: false`; it checks cwd, streaming stdin, read-only denial, workspace write boundaries, protocol cancellation, AbortSignal, disposal, and successful re-admission afterward. Without this variable, that test is skipped.
 
+Integration targets unmodified dsh master and its 0.2.1-rc.2 interfaces. Build RunSeal with RFC-0022 support. Set `RUNSEAL_TEST_BINARY` to the native binary and `DSH_SOURCE_ROOT` to an unmodified dsh checkout to test the upstream control helper directly. No upstream patches or protocol downgrade are used.
+
 ## License
 
 MIT
-Local native integration currently requires the sibling `deepseek-harness` checkout with the terminal observation and descriptor-channel changes, plus a RunSeal build implementing RFC-0022. The development dependency links that checkout; released 0.2.1-rc.2 alone does not supply these interfaces. Build the local subprocess package before running plugin checks. No protocol downgrade is performed.

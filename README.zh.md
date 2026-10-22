@@ -8,7 +8,7 @@
 
 ## 适配基线
 
-以本地上游源码为准：dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`，对应已发布包 `0.2.1-rc.2`；RunSeal `main@8c18b10034be51c15d9fd02efded8d8594a3be9a`，版本 `0.2.0`、协议 v2。RunSeal 没有 `master` 分支。本机原生测试二进制报告 `0.2.0-rc.1`；`0.2.0` 发布提交没有改变运行时代码。旧协议不属于本次验证基线。
+以本地上游源码为准：dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`，对应已发布包 `0.2.1-rc.2`；RunSeal `main@8c18b10034be51c15d9fd02efded8d8594a3be9a`，版本 `0.2.0`、协议 v2。RunSeal 没有 `master` 分支。本机原生测试二进制报告 `0.2.0`，包含 RFC-0022 的控制传输与终端身份改动。旧协议不属于本次验证基线。
 
 ## 功能
 
@@ -94,7 +94,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 ## 已知限制与待办
 
-- **原生交互 I/O** —— PTY 启动、输入、resize 和 interrupt 通过 RunSeal RPC 接入。控制数据使用子进程 fd 7 上的独立双工流。interrupt 返回已接收，不声称已向前台组送达；PID 和 shell 活动保持未知。其他前台信号明确拒绝。终端终止会等待清理及在途操作完成。
+- **原生交互 I/O** —— PTY 启动、输入、resize 和 interrupt 通过 RunSeal RPC 接入。控制数据使用子进程 fd 7 上的原生字节管道；关闭输入只封闭后续写入，不发送对端 EOF，子进程通过消息边界完成通信后关闭通道。终端提供真实子进程 PID；interrupt 等待原生 Ctrl-C 写入确认，返回 Windows 控制台根进程 PID。shell 活动保持未知。Windows SIGTERM 通过协议取消并等待控制台进程范围清空；拒绝对终端 shell 执行 SIGKILL，不支持 SIGTSTP 和 SIGHUP。终端终止会等待清理及在途操作完成。
 - **覆盖范围** —— 管理经过 `ctx.subprocess` 的命令；直接使用 `node:child_process` 的代码不受此 provider 管理。
 - **已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。宿主被强制结束仍无法保证优雅清理。
 - **平台验证范围** —— 本次在 Windows 做了原生集成验证；未运行 macOS/Linux 实测和 UAC setup。
@@ -113,7 +113,8 @@ pnpm build       # tsc + 复制 wrapper.cjs 到 lib/
 
 原生集成测试需要将 `RUNSEAL_TEST_BINARY` 设为二进制绝对路径，再运行 `pnpm test`。测试使用临时工作区并关闭 `autoSetup`，覆盖 cwd、流式 stdin、只读拒写、工作区写入边界、协议取消、AbortSignal、插件卸载及其后的再次执行。未设置该变量时跳过原生测试。
 
+原生集成以未修改的 dsh master 和 0.2.1-rc.2 接口为准。构建支持 RFC-0022 的 RunSeal，设置 `RUNSEAL_TEST_BINARY` 指向原生二进制，设置 `DSH_SOURCE_ROOT` 指向未修改的 dsh 源码，即可直接验证上游控制通道 helper。不需要修改 dsh，也不做协议降级。
+
 ## License
 
 MIT
-本地原生集成需要相邻 `deepseek-harness` 仓库中的终端观察与描述符通道改动，以及实现 RFC-0022 的 RunSeal 构建。开发依赖链接该仓库；单独安装已发布的 0.2.1-rc.2 不具备这些接口。检查插件前需构建本地 subprocess 包，不执行协议降级。

@@ -114,7 +114,8 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     dimensions(spec.cols, spec.rows)
     const execution = this.spawnExecution({ ...spec, env: { ...spec.env, TERM: spec.terminalType },
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' } }, spec)
-    try { await execution.started } catch (error) {
+    let pid: number
+    try { pid = await execution.started } catch (error) {
       execution.handle.terminate()
       await execution.handle.waitForExit()
       spec.signal?.throwIfAborted()
@@ -125,16 +126,26 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     let revision = 0
     const handle = execution.handle
     return {
-      pid: undefined, output: handle.stdout!, done: handle.done,
+      pid, output: handle.stdout!, done: handle.done,
       write: async data => { revision++; await execution.write('stdin', Buffer.from(data)) },
       resize: async (cols, rows) => { dimensions(cols, rows); await execution.request('resizeExecution', { cols, rows }) },
-      inspectForeground: async () => undefined,
+      inspectForeground: async () => execution.isRunning() ? { processGroupId: pid, inputWaiting: false } : undefined,
       inspectActivity: async () => ({ state: 'unknown', revision }),
       signalForeground: async signal => {
+        if (!execution.isRunning()) throw new Error('runseal: terminal is closing')
+        if (signal === 'SIGKILL') throw new Error('runseal: refusing to SIGKILL the terminal shell; terminate the session instead')
+        if (signal === 'SIGTERM') {
+          handle.terminate()
+          await handle.waitForExit()
+          await execution.join()
+          revision++
+          return pid
+        }
         if (signal !== 'SIGINT') throw new Error(`runseal: unsupported foreground signal ${signal}`)
-        await execution.request('signalExecution', { signal: 'interrupt' })
+        const target = await execution.interrupt()
+        if (target !== pid) throw new Error('runseal: interrupt target differs from terminal identity')
         revision++
-        return undefined
+        return target
       },
       terminate: async () => { handle.terminate(); await handle.waitForExit(); await execution.join() },
     }
@@ -153,7 +164,13 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     const done = deferred<SubprocessOutcome>()
     const quiescent = deferred<void>()
     const admitted = deferred<string>()
-    const started = deferred<void>()
+    const started = deferred<number>()
+    const deliveries = new Map<number, ReturnType<typeof deferred<number>>>()
+    const delivery = (sequence: number) => {
+      let value = deliveries.get(sequence)
+      if (!value) { value = deferred<number>(); deliveries.set(sequence, value) }
+      return value
+    }
     const operations = new Set<Promise<unknown>>()
     let executionId: string | undefined
     let cancelled = false
@@ -162,11 +179,18 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     let submitted = false
     let settled = false
     let ioFailure: unknown
-    const childEnv = { ...spec.env, ...spec.stdio.control ? { [SUBPROCESS_CONTROL_ENV]: 'descriptor' } : {} }
+    const childEnv = { ...spec.env, ...spec.stdio.control ? { [SUBPROCESS_CONTROL_ENV]: 'pipe' } : {} }
     const env = environment(childEnv)
     const client = new RunsealRpcClient({ command: this.config.command, args: this.config.args, env, replaceEnv: true }, event => {
       if (event.execution_id !== executionId) return
-      if (event.type === 'execution.started') started.resolve()
+      if (event.type === 'execution.started') {
+        if (!Number.isSafeInteger(event.process_id) || (event.process_id as number) <= 0) {
+          started.reject(new Error('runseal: missing native process identity')); terminate()
+        } else started.resolve(event.process_id as number)
+      }
+      if (event.type === 'execution.signal_delivered' && Number.isSafeInteger(event.sequence) && (event.sequence as number) > 0 && Number.isSafeInteger(event.target_process_id) && (event.target_process_id as number) > 0) {
+        delivery(event.sequence as number).resolve(event.target_process_id as number)
+      }
       if (event.type === 'execution.control' && typeof event.data === 'string' && event.data.startsWith('base64:')) control?.push(Buffer.from(event.data.slice(7), 'base64'))
       if (event.type === 'execution.stdout' || event.type === 'execution.stderr' || event.type === 'execution.terminal') {
         if (typeof event.data !== 'string' || !event.data.startsWith('base64:')) return
@@ -225,6 +249,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       spec.signal?.removeEventListener('abort', terminate)
       admitted.reject(error ?? new Error('runseal: execution ended'))
       started.reject(error ?? new Error('runseal: execution ended before terminal startup'))
+      for (const value of deliveries.values()) value.reject(error ?? new Error('runseal: execution ended before signal delivery'))
       input.destroy()
       control?.push(null)
       stdout.end(); stderr.end()
@@ -283,6 +308,20 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       } catch (error) { await finish(undefined, error) }
     })()
     if (spec.stdio.stdin !== 'pipe') input.end(spec.stdio.stdin === 'ignore' ? undefined : spec.stdio.stdin.data)
-    return { handle, started: started.promise, request, write, join: async () => { await Promise.allSettled(operations) } }
+    const interrupt = () => {
+      const pending = (async () => {
+        const receipt = await request('signalExecution', { signal: 'interrupt' }) as Record<string, unknown>
+        if (!Number.isSafeInteger(receipt.sequence) || (receipt.sequence as number) <= 0) throw new Error('runseal: invalid signal receipt')
+        const sequence = receipt.sequence as number
+        const confirmation = deliveries.get(sequence)
+        if (terminal && !confirmation) throw new Error('runseal: execution ended before signal delivery')
+        try { return await (confirmation ?? delivery(sequence)).promise }
+        finally { deliveries.delete(sequence) }
+      })()
+      operations.add(pending)
+      void pending.then(() => operations.delete(pending), () => operations.delete(pending))
+      return pending
+    }
+    return { handle, started: started.promise, request, write, interrupt, isRunning: () => !terminal && !cancelled, join: async () => { await Promise.allSettled(operations) } }
   }
 }
