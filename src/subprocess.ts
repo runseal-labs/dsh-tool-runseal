@@ -68,7 +68,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
   private readonly live = new Set<SubprocessHandle>()
   private disposed = false
 
-  constructor(ctx: Context, private readonly config: ResolvedEngineConfig) {
+  constructor(ctx: Context, private readonly config: ResolvedEngineConfig | (() => ResolvedEngineConfig)) {
     super(ctx)
     ctx.effect(() => async () => {
       this.disposed = true
@@ -156,6 +156,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
   }
 
   private spawnExecution(spec: SubprocessSpawnSpec, pty?: SubprocessTerminalSpawnSpec) {
+    const config = typeof this.config === 'function' ? this.config() : this.config
     if (this.disposed) throw new Error('runseal: subprocess provider disposed')
     validate(spec)
     const confinement = confinedSpec(spec.argv)
@@ -181,7 +182,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     let ioFailure: unknown
     const childEnv = { ...spec.env, ...spec.stdio.control ? { [SUBPROCESS_CONTROL_ENV]: 'pipe' } : {} }
     const env = environment(childEnv)
-    const client = new RunsealRpcClient({ command: this.config.command, args: this.config.args, env, replaceEnv: true }, event => {
+    const client = new RunsealRpcClient({ command: config.command, args: config.args, env, replaceEnv: true }, event => {
       if (event.execution_id !== executionId) return
       if (event.type === 'execution.started') {
         if (!Number.isSafeInteger(event.process_id) || (event.process_id as number) <= 0) {
@@ -289,7 +290,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     void (async () => {
       try {
         let policy: unknown = confinement?.policy ?? 'danger-full-access'
-        const network = confinement?.network ?? this.config.networkMode
+        const network = confinement?.network ?? config.networkMode
         if (confinement?.policy === 'workspace-write') {
           const explained = await client.request('explainPolicy', { policy, cwd: confinement.cwd, network }) as Record<string, unknown>
           const filesystem = { ...explained.filesystem as Record<string, unknown> }

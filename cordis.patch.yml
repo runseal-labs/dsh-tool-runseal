@@ -1,0 +1,9 @@
+- id: sandbox
+  disabled: true
+- id: subprocess
+  disabled: true
+- insert:
+    - id: sandbox-runseal
+      name: dsh-tool-runseal
+      config:
+        command: runseal

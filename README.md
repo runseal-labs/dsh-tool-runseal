@@ -32,39 +32,24 @@ On Windows, confined modes (`read-only`, `workspace-write`) require the sandbox 
 runseal setup windows-sandbox --cwd <workspace> --elevate
 ```
 
-Then install the plugin into your dsh profile:
+Install the built package into the Web profile and add dsh-tool-runseal to dsh.profile.bundles in the profile package.json:
 
 ```sh
-cd ~/.dsh/profiles/web && pnpm add dsh-tool-runseal
-# or from source:
-#   git clone https://github.com/runseal-labs/dsh-tool-runseal && cd dsh-tool-runseal && pnpm install && pnpm build
+pnpm build
+pnpm pack
+cd ~/.dsh/profiles/web
+pnpm add /absolute/path/dsh-tool-runseal-0.1.1.tgz
 ```
 
-## Mount into dsh
-
-RunSeal takes over `ctx.sandbox` and `ctx.subprocess`. Disable both local providers before loading the plugin:
+The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It resolves runseal on PATH by default. To use an absolute executable path, add this to the profile cordis.patch.yml:
 
 ```yaml
-# cordis.patch.yml — replace the built-in local sandbox with RunSeal
-- id: sandbox
-  disabled: true
-
-- id: subprocess
-  disabled: true
-
-- insert:
-    - id: sandbox-runseal
-      name: 'dsh-tool-runseal'
-      config:
-        # runseal executable: absolute path, or a name resolved on PATH
-        command: 'runseal'
-        # network mode: unmanaged (default), disabled, or proxy
-        networkMode: 'unmanaged'
-        # default per-execution timeout in ms
-        timeoutMs: 600000
+- id: sandbox-runseal
+  config:
+    command: 'C:/path/to/runseal.exe'
 ```
 
-> Both services are single-provider keys. The `dsh-subprocess-local` package remains a dependency only for its public output collector; its process runner is not mounted.
+Start dsh web normally and open Plugins → RunSeal to edit the executable, network mode, timeout, input limit, extra arguments and wrapper auto-setup. Saving uses dsh's native configuration service to persist the profile. New commands take a configuration snapshot; running commands keep their original settings. Remove any manual insertion or command-line overlay for the same component to avoid duplicate mounting or blocked UI writes.
 
 ## Configuration
 
@@ -99,7 +84,7 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 - **Existing abandoned gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. Hard host termination still cannot guarantee graceful cleanup.
 - **Platform verification** — native integration was exercised on Windows. macOS/Linux execution and UAC setup have not been exercised by this adaptation.
 - **Setup** — complete Windows setup before mounting the subprocess provider. It never performs automatic elevation.
-- **Single provider per service** — disable both `sandbox` and `subprocess` as shown above.
+- **Single provider per service** — the bundle disables both `sandbox` and `subprocess`.
 - **No fallback chain** — unlike `sandbox-local` (bwrap→Landlock→Seatbelt→ACL), this provider does not chain to other runners; runseal must be usable or the call fails closed.
 
 ## Development

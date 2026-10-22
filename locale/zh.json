@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "RunSeal",
+    "description": "使用 RunSeal 管理沙箱命令、子进程和终端。"
+  }
+}

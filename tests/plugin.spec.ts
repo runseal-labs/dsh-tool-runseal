@@ -72,9 +72,7 @@ describe('RunsealSandboxProvider confine', () => {
     const ctx = new Context()
     return { ctx, sandbox: new Plugin.RunsealSandboxProvider(
       ctx,
-      { command: 'runseal', args: [], networkMode: 'unmanaged', maxStdinBytes: 65536 },
-      600_000,
-      true,
+      () => ({ command: 'runseal', args: [], networkMode: 'unmanaged', maxStdinBytes: 65536, timeoutMs: 600_000, autoSetup: true }),
     ) }
   }
 
@@ -106,4 +104,17 @@ describe('RunsealSandboxProvider confine', () => {
     const spec = JSON.parse(confined.argv[2] as string)
     expect(spec.policy).toBe('workspace-write')
   })
+})
+it('snapshots live sandbox settings for each new confinement', async () => {
+  const ctx = new Context()
+  let timeoutMs = 1000
+  const sandbox = new Plugin.RunsealSandboxProvider(ctx, () => ({ command: 'runseal', timeoutMs }))
+  try {
+    const policy: SandboxPolicy = { mode: 'read-only', workspaceRoot: process.cwd() }
+    const first = await sandbox.confine(['echo', 'hello'], policy)
+    timeoutMs = 2000
+    const second = await sandbox.confine(['echo', 'hello'], policy)
+    expect(JSON.parse(first.argv[2]!).timeoutMs).toBe(1000)
+    expect(JSON.parse(second.argv[2]!).timeoutMs).toBe(2000)
+  } finally { await ctx.fiber.dispose() }
 })

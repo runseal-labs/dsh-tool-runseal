@@ -12,7 +12,7 @@ function config(scenario: string) {
   return resolveEngineConfig({ command: process.execPath, args: [fake, scenario] })
 }
 async function runWrapper(scenario: string, input = '') {
-  const provider = new RunsealSandboxProvider(new Context(), config(scenario), 1000, false)
+  const provider = new RunsealSandboxProvider(new Context(), () => ({ ...config(scenario), timeoutMs: 1000, autoSetup: false }))
   const confined = await provider.confine(['unused'], { mode: 'read-only', workspaceRoot: process.cwd() })
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(confined.argv[0]!, confined.argv.slice(1), { stdio: 'pipe' })
@@ -47,7 +47,7 @@ describe('wrapper process', () => {
 
 describe('async sandbox and RPC execution', () => {
   it('rejects an already cancelled confine call', async () => {
-    const provider = new RunsealSandboxProvider(new Context(), config('output'), 1000, false)
+    const provider = new RunsealSandboxProvider(new Context(), () => ({ ...config('output'), timeoutMs: 1000, autoSetup: false }))
     await expect(provider.confine(['unused'], { mode: 'read-only', workspaceRoot: process.cwd() }, AbortSignal.abort())).rejects.toThrow()
   })
   it('engine awaits terminal completion and assembles streamed output', async () => {
@@ -85,7 +85,7 @@ describe('dsh service integration', () => {
     const ctx = new Context()
     await ctx.plugin(LocalSubprocessRuntime)
     const runtime = ctx.subprocess
-    const provider = new RunsealSandboxProvider(ctx, config('echo'), 1000, false)
+    const provider = new RunsealSandboxProvider(ctx, () => ({ ...config('echo'), timeoutMs: 1000, autoSetup: false }))
     try {
       const confined = await provider.confine(['unused'], { mode: 'read-only', workspaceRoot: process.cwd() })
       const handle = runtime.spawn({ argv: confined.argv, cwd: process.cwd(), graceMs: 1000,

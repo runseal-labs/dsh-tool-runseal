@@ -32,39 +32,24 @@ Windows 上受限模式（`read-only`、`workspace-write`）需要先执行一�
 runseal setup windows-sandbox --cwd <workspace> --elevate
 ```
 
-然后把插件装进 dsh profile：
+将构建好的包安装到 Web profile，并在 profile 的 package.json 的 dsh.profile.bundles 中加入 dsh-tool-runseal：
 
 ```sh
-cd ~/.dsh/profiles/web && pnpm add dsh-tool-runseal
-# 或从源码：
-#   git clone https://github.com/runseal-labs/dsh-tool-runseal && cd dsh-tool-runseal && pnpm install && pnpm build
+pnpm build
+pnpm pack
+cd ~/.dsh/profiles/web
+pnpm add /absolute/path/dsh-tool-runseal-0.1.1.tgz
 ```
 
-## 挂载到 dsh
-
-RunSeal 接管 `ctx.sandbox` 和 `ctx.subprocess`。禁用两个本地 provider，再加载插件：
+bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认从 PATH 查找 runseal。需要指定绝对路径时，在 profile 的 cordis.patch.yml 中添加：
 
 ```yaml
-# cordis.patch.yml —— 用 RunSeal 替换内置本地沙箱
-- id: sandbox
-  disabled: true
-
-- id: subprocess
-  disabled: true
-
-- insert:
-    - id: sandbox-runseal
-      name: 'dsh-tool-runseal'
-      config:
-        # runseal 可执行文件：绝对路径，或 PATH 上的名称
-        command: 'runseal'
-        # 网络模式：unmanaged（默认）、disabled 或 proxy
-        networkMode: 'unmanaged'
-        # 单次执行默认超时（毫秒）
-        timeoutMs: 600000
+- id: sandbox-runseal
+  config:
+    command: 'C:/path/to/runseal.exe'
 ```
 
-> 两个服务都只能挂载一个 provider。仍依赖 `dsh-subprocess-local` 包的公开输出收集工具，但不挂载它的进程执行服务。
+正常启动 dsh web，然后打开「插件 → RunSeal」编辑可执行文件、网络模式、超时、输入上限、额外参数和 wrapper 自动 setup。保存使用 dsh 原生配置服务，写回 profile；新命令使用最新配置快照，正在执行的命令保留启动时的配置。不要再使用同名组件的手工 insert 或 --patch overlay，否则可能重复挂载或阻止页面保存。
 
 ## 配置
 
@@ -99,7 +84,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 - **已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。宿主被强制结束仍无法保证优雅清理。
 - **平台验证范围** —— 本次在 Windows 做了原生集成验证；未运行 macOS/Linux 实测和 UAC setup。
 - **Setup** —— 挂载 subprocess provider 前完成 Windows setup；provider 不自动提权。
-- **每个服务只能挂载一个 provider** —— 按上面的配置同时禁用 `sandbox` 和 `subprocess`。
+- **每个服务只能挂载一个 provider** —— bundle 自动禁用 `sandbox` 和 `subprocess`。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
 
 ## 开发

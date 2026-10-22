@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "RunSeal",
+    "description": "Manage sandboxed commands, subprocesses and terminals with RunSeal."
+  }
+}

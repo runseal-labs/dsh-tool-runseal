@@ -18,7 +18,7 @@
 import { wrapperPath } from './confinement.ts'
 import { RunsealSubprocessRuntime } from './subprocess.ts'
 export { RunsealSubprocessRuntime } from './subprocess.ts'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { SandboxProvider, SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
 import type { ConfinedArgv, RunnerFailureRule, SandboxEnforcement, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
@@ -54,14 +54,15 @@ export interface Config extends Omit<EngineConfig, 'args'> {
 }
 
 /** Schemastery config schema validated by the Cordis loader. */
-export const Config: z<Config> = z.object({
-  command: z.string().required(),
+export type LiveConfig = { [K in keyof Required<Config>]: K extends 'subprocess' ? boolean : Volatile<Required<Config>[K]> }
+export const Config: z<Config, LiveConfig> = z.object({
+  command: z.string().pattern(/\S/).required().volatile(),
   subprocess: z.boolean().default(true),
-  args: z.array(String).default([]),
-  networkMode: z.union([z.const('unmanaged'), z.const('disabled'), z.const('proxy')]).default('unmanaged'),
-  maxStdinBytes: z.number().default(64 * 1024),
-  timeoutMs: z.number().default(600_000),
-  autoSetup: z.boolean().default(true),
+  args: z.array(String).default([]).volatile(),
+  networkMode: z.union([z.const('unmanaged'), z.const('disabled'), z.const('proxy')]).default('unmanaged').volatile(),
+  maxStdinBytes: z.number().min(1).step(1).default(64 * 1024).volatile(),
+  timeoutMs: z.number().min(1).step(1).default(600_000).volatile(),
+  autoSetup: z.boolean().default(true).volatile(),
 })
 
 /** The wrapper's stable failure prefix (its `runseal: <reason>` stderr line). */
@@ -80,31 +81,21 @@ const RUNSEAL_DENIAL_CODES = new Set([
  * @param ctx - the plugin context.
  * @param config - resolved plugin configuration.
  */
-export function apply(ctx: Context, config: Config): void {
-  const resolved = resolveEngineConfig(config)
-  if (resolved.command.trim() === '') throw new Error('dsh-tool-runseal: command must be a non-empty string')
-  const timeoutMs = config.timeoutMs ?? 600_000
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
-    throw new Error('dsh-tool-runseal: timeoutMs must be a positive integer')
-  }
-
-  if (config.subprocess !== false) new RunsealSubprocessRuntime(ctx, resolved)
-  const autoSetup = config.autoSetup ?? true
-  const provider = new RunsealSandboxProvider(ctx, resolved, timeoutMs, autoSetup)
-  void provider
+export function apply(ctx: Context, config: LiveConfig): void {
+  const read = (): Config => ({
+    command: config.command.get(), args: [...config.args.get()], networkMode: config.networkMode.get(),
+    maxStdinBytes: config.maxStdinBytes.get(), timeoutMs: config.timeoutMs.get(), autoSetup: config.autoSetup.get(),
+  })
+  if (config.subprocess !== false) new RunsealSubprocessRuntime(ctx, () => resolveEngineConfig(read()))
+  new RunsealSandboxProvider(ctx, read)
 }
 
-/**
- * The RunSeal-backed `ctx.sandbox` implementation. `confine` resolves the wrapper argv asynchronously; the wrapper performs
- * the actual RPC execution when the consumer spawns it.
- */
+/** Confine each command using a snapshot of the current profile settings. */
 export class RunsealSandboxProvider extends SandboxProvider {
 
   constructor(
     ctx: Context,
-    private readonly config: ReturnType<typeof resolveEngineConfig>,
-    private readonly timeoutMs: number,
-    private readonly autoSetup: boolean,
+    private readonly readConfig: () => Config,
   ) {
     super(ctx)
   }
@@ -125,15 +116,17 @@ export class RunsealSandboxProvider extends SandboxProvider {
   }
 
   private wrap(argv: readonly string[], policy: SandboxPolicy, policyId: string, enforcement: SandboxEnforcement): ConfinedArgv {
+    const snapshot = this.readConfig()
+    const config = resolveEngineConfig(snapshot)
     const spec = {
-      command: this.config.command,
-      args: this.config.args,
+      command: config.command,
+      args: config.args,
       argv: [...argv],
       cwd: policy.workspaceRoot,
       policy: policyId,
-      network: this.config.networkMode,
-      timeoutMs: this.timeoutMs,
-      autoSetup: this.autoSetup,
+      network: config.networkMode,
+      timeoutMs: snapshot.timeoutMs ?? 600_000,
+      autoSetup: snapshot.autoSetup ?? true,
     }
     return {
       argv: [process.execPath, wrapperPath, JSON.stringify(spec)],
