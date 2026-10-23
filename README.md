@@ -8,7 +8,7 @@ Fully out-of-tree: depends only on published dsh base packages. Registers both `
 
 ## Compatibility
 
-Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin **0.2.5** pins **RunSeal 0.2.2**. Plugin patch releases are versioned independently; no dsh source changes are required.
+Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin **0.2.6** pins **RunSeal 0.2.3**. Plugin patch releases are versioned independently; no dsh source changes are required.
 
 ## What it provides
 
@@ -24,7 +24,7 @@ Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`
 
 ## Install
 
-Install the bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.5`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.5 downloads **RunSeal 0.2.2** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package.
+Install the bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.6`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.6 downloads **RunSeal 0.2.3** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package.
 
 Supported downloads: Windows, macOS and Linux on x64 or arm64. Downloads use a fixed release URL, never `latest`. Binary availability does not imply that every OS supports restricted policies. Network access to GitHub releases and enabled npm lifecycle scripts are required; installation fails with a diagnostic on download/checksum errors. For package managers that block scripts, allow this package's install script or run `npm rebuild dsh-tool-runseal` with scripts enabled. No runtime download or silent unrestricted fallback occurs.
 
@@ -42,7 +42,7 @@ Install the built package into the Web profile and add dsh-tool-runseal to dsh.p
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.5.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.6.tgz
 ```
 
 The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It uses the automatically downloaded binary by default. To override it, add this to the profile cordis.patch.yml:
@@ -87,7 +87,7 @@ Child executable names are resolved against the execution's effective PATH and w
 
 `enforcement: full` describes dsh's promised file effects for an admitted execution, including backend-defined temporary writes. It does not mean network isolation, read containment, a stable backend support label, or protection against every sandbox escape. RunSeal must reject unsupported enforcement rather than downgrade it; macOS `experimental` is a separate maturity label. The claim is conditional on successful admission, not a capability probe performed by `confine()`.
 
-The subprocess provider reuses RPC connections for its lifetime, separated by executable, arguments and transport environment. Executions retain independent IDs, streams, cancellation and terminal cleanup proof. `done` and `waitForExit()` require `cleanup_complete: true`, without waiting for the shared owner to exit. Transport loss fails affected executions without replay; later calls can create a new connection. Connections with missing cleanup proof stop accepting new executions and close after their remaining executions finish. Provider disposal cancels and joins all executions, then closes connections and joins owners. Windows source builds reuse a non-elevated ACL refresh worker while preparing transient execution roots independently; protocol shutdown joins that worker. These source changes require rebuilding the plugin and native binaries; published 0.2.5 / 0.2.2 packages retain their previous behavior.
+The subprocess provider reuses RPC connections for its lifetime, separated by executable, arguments and transport environment. Executions retain independent IDs, streams, cancellation and terminal cleanup proof. `done` and `waitForExit()` require `cleanup_complete: true`, without waiting for the shared owner to exit. Transport loss fails affected executions without replay; later calls can create a new connection. Connections with missing cleanup proof stop accepting new executions and close after their remaining executions finish. Provider disposal cancels and joins all executions, then closes connections and joins owners. Windows source builds reuse a non-elevated ACL refresh worker while preparing transient execution roots independently; protocol shutdown joins that worker. Plugin 0.2.6 and RunSeal 0.2.3 include these lifecycle changes.
 
 Collected output uses dsh's public bounded-tail/spill collector. Explicit environment entries are forwarded subject to RunSeal's environment policy; keys denied by its scrub policy fail explicitly. With `subprocess: false`, other consumers still launch the standalone wrapper, retaining its existing limitations.
 

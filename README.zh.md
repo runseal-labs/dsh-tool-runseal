@@ -8,7 +8,7 @@
 
 ## 适配基线
 
-适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件 **0.2.5** 固定 **RunSeal 0.2.2**。插件补丁版本独立递增，无需修改 dsh 源码。
+适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件 **0.2.6** 固定 **RunSeal 0.2.3**。插件补丁版本独立递增，无需修改 dsh 源码。
 
 ## 功能
 
@@ -24,7 +24,7 @@
 
 ## 安装
 
-通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.5` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.5 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.2**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。
+通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.6` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.6 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.3**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。
 
 支持下载 Windows、macOS、Linux 的 x64 / arm64 版本；固定版本 URL，不跟随 `latest`。提供二进制不代表各系统都支持受限策略。需要可访问 GitHub releases，并允许 npm 安装脚本；下载或校验失败会明确报错。若包管理器默认禁用脚本，需允许本包安装脚本，或启用脚本后执行 `npm rebuild dsh-tool-runseal`。运行时不自动下载，也不会静默降级为无沙箱执行。
 
@@ -42,7 +42,7 @@ runseal setup windows-sandbox --cwd <workspace> --elevate
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.5.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.6.tgz
 ```
 
 bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认使用自动下载的二进制。需要覆盖时，在 profile 的 cordis.patch.yml 中添加：
@@ -87,7 +87,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 `enforcement: full` 描述已准入执行对 dsh 所承诺文件效果的完整强制，包括后端定义的临时目录写入；不代表网络隔离、读隔离、后端支持等级稳定或能阻止所有沙箱逃逸。RunSeal 必须拒绝无法强制的策略，不能降级透传；macOS 的 experimental 是另一维度的成熟度标记。该声明以成功准入为条件，`confine()` 本身不执行能力探测。
 
-subprocess provider 在自身生命周期内复用 RPC 连接，按可执行文件、参数和 transport 环境隔离。每次执行仍有独立的 ID、输入输出、取消和终态清理证明。`done` 和 `waitForExit()` 要求 `cleanup_complete: true`，不再等待共享 owner 退出。连接丢失会使相关执行失败，不自动重放；后续调用可重建连接。缺少清理证明的连接停止接收新执行，等待剩余执行结束后关闭。provider 卸载时取消并等待全部执行，再关闭连接、等待 owner 退出。Windows 源码构建复用不提权的 ACL refresh worker，每次执行的临时目录仍独立准备；协议关闭时等待 worker 退出。这些源码改动需要同时重建插件和原生二进制；已发布的 0.2.5 / 0.2.2 包仍保持原有行为。
+subprocess provider 在自身生命周期内复用 RPC 连接，按可执行文件、参数和 transport 环境隔离。每次执行仍有独立的 ID、输入输出、取消和终态清理证明。`done` 和 `waitForExit()` 要求 `cleanup_complete: true`，不再等待共享 owner 退出。连接丢失会使相关执行失败，不自动重放；后续调用可重建连接。缺少清理证明的连接停止接收新执行，等待剩余执行结束后关闭。provider 卸载时取消并等待全部执行，再关闭连接、等待 owner 退出。Windows 源码构建复用不提权的 ACL refresh worker，每次执行的临时目录仍独立准备；协议关闭时等待 worker 退出。插件 0.2.6 与 RunSeal 0.2.3 包含这些生命周期改动。
 
 输出收集复用 dsh 公开的有限尾部缓存与溢出文件工具。显式环境变量仍受 RunSeal 策略约束，被擦除策略禁止的键会明确报错。设为 `subprocess: false` 时，其他消费者仍启动独立 wrapper，其已有生命周期限制继续存在。
 

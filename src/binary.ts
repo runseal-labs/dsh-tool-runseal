@@ -9,7 +9,7 @@ import { unzipSync } from 'fflate'
 import { x as extractTar } from 'tar'
 
 /** Explicit native release pin; plugin-only patches need not change it. Never resolve `latest`. */
-export const RUNSEAL_VERSION = '0.2.2'
+export const RUNSEAL_VERSION = '0.2.3'
 const releaseRoot = `https://github.com/runseal-labs/runseal/releases/download/v${RUNSEAL_VERSION}`
 const packageRoot = fileURLToPath(new URL('../', import.meta.url))
 const maxArchiveBytes = 64 * 1024 * 1024

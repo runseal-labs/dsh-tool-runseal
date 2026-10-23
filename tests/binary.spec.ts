@@ -22,7 +22,7 @@ afterEach(async () => {
 describe('native installer', () => {
   it('maps all six release platforms and rejects unsupported architectures', () => {
     for (const os of ['win32', 'linux', 'darwin']) for (const arch of ['x64', 'arm64']) {
-      expect(binaryTarget(os, arch).asset).toMatch(/^runseal-v0\.2\.2-/)
+      expect(binaryTarget(os, arch).asset).toMatch(/^runseal-v0\.2\.3-/)
     }
     expect(() => binaryTarget('linux', 'ia32')).toThrow('does not provide')
   })
