@@ -2,8 +2,8 @@
  * Minimal JSON-RPC 2.0 client over `runseal rpc --stdio`. One persistent child
  * process, newline-delimited JSON-RPC messages. Each request resolves with the
  * matching `result` or rejects with the structured `error`; `method: "event"`
- * notifications are dispatched to a listener. Reconnects lazily on demand when
- * the child died.
+ * notifications are dispatched to a listener. A lost transport is retired;
+ * its owner creates a fresh client for subsequent executions.
  * @module dsh-tool-runseal/rpc-client
  */
 
@@ -48,7 +48,7 @@ export interface RpcClientOptions {
   command: string
   /** Extra arguments before the `rpc` subcommand. Default `[]`. */
   args?: readonly string[]
-  /** Abort signal that kills the child and rejects in-flight requests. */
+  /** Abort signal that closes RPC input and rejects in-flight requests. */
   signal?: AbortSignal
   /** Maximum buffered stdout line length before truncation. Default 16 MiB. */
   maxLineBytes?: number
@@ -60,11 +60,12 @@ export interface RpcClientOptions {
 
 /**
  * Persistent JSON-RPC client over `runseal rpc --stdio`. Lazily spawns the
- * child on the first request, keeps it for the lifetime, and re-spawns when it
- * died. Frames are newline-delimited JSON; server-initiated `event`
+ * child on the first request and keeps it until close or transport loss.
+ * Frames are newline-delimited JSON; server-initiated `event`
  * notifications are forwarded to `onEvent`.
  */
 export class RunsealRpcClient {
+  get usable(): boolean { return !this.destroyed }
   private child: ChildProcess | undefined
   private buffer = Buffer.alloc(0)
   private readonly pending = new Map<number, PendingRequest>()
@@ -154,11 +155,12 @@ export class RunsealRpcClient {
       // runseal writes diagnostics to stderr; keep the stream drained so the
       // child never blocks on a full stderr pipe.
     })
-    child.stdin?.on('error', error => { if (this.child === child) this.rejectAll(error) })
-    child.on('error', error => { if (this.child === child) this.rejectAll(error) })
+    child.stdin?.on('error', error => { if (this.child === child) { this.rejectAll(error); this.destroy() } })
+    child.on('error', error => { if (this.child === child) { this.rejectAll(error); this.destroy() } })
     child.on('close', () => {
       if (this.child !== child) return
       this.rejectAll(new Error('runseal rpc child exited'))
+      this.destroyed = true
       this.child = undefined
       this.buffer = Buffer.alloc(0)
     })

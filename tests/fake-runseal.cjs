@@ -1,20 +1,25 @@
 // Minimal protocol peer. Run as node fake-runseal.cjs [scenario] rpc --stdio.
 const { createInterface } = require('node:readline')
+const { AsyncLocalStorage } = require('node:async_hooks')
+const scope = new AsyncLocalStorage()
+const executions = new Map()
 const lines = JSON.parse(process.env.FAKE_RUNSEAL_LINES ?? '[]')
 const scenario = process.argv[2]
-const executionId = 'exec_fixture'
-let input = []
 let sequence = 0
 let timer
 let pressureAttempts = 0
 const send = message => process.stdout.write(JSON.stringify(message) + '\n')
-const event = (type, extra = {}) => send({ jsonrpc: '2.0', method: 'event', params: { type, execution_id: executionId, ...extra } })
+const event = (type, extra = {}) => send({ jsonrpc: '2.0', method: 'event', params: { type, execution_id: scope.getStore().id, ...extra } })
 function terminal(code = 0, extra = {}) {
+  const executionId = scope.getStore().id
   event(extra.error ? 'execution.failed' : 'execution.finished', { result: { execution_id: executionId, status: extra.error ? 'failed' : 'finished', cleanup_complete: scenario !== 'unclean', exit_code: code, ...extra } })
 }
 const reader = createInterface({ input: process.stdin })
 reader.on('line', line => {
   const request = JSON.parse(line)
+  const executionId = request.method === 'execute' ? (executions.size ? `exec_fixture_${executions.size}` : 'exec_fixture') : request.params?.execution_id
+  if (request.method === 'execute') executions.set(executionId, { id: executionId, input: [] })
+  scope.run(executions.get(executionId), () => {
   if (lines.length) {
     for (const payload of lines.splice(0)) process.stdout.write(payload + '\n')
     return
@@ -28,11 +33,15 @@ reader.on('line', line => {
     }
     if (scenario === 'abrupt') return process.exit(0)
     const receipt = JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { execution_id: executionId, status: 'preparing' } }) + '\n'
-    process.stdout.write(receipt.slice(0, 17))
     setTimeout(() => {
-      process.stdout.write(receipt.slice(17))
+      process.stdout.write(receipt)
       if (scenario === 'pty-preparing') return
       event('execution.started', { process_id: scenario === 'pty-no-pid' ? undefined : 12345 })
+      if (scenario === 'shared') {
+        event('execution.stdout', { data: 'base64:' + Buffer.from(JSON.stringify({ owner: process.pid, executionId, argv: request.params.command })).toString('base64') })
+        if (!request.params.command.includes('hold')) terminal()
+        return
+      }
       if (scenario === 'argv') {
         event('execution.stdout', { data: `base64:${Buffer.from(JSON.stringify(request.params)).toString('base64')}` })
         terminal()
@@ -63,13 +72,14 @@ reader.on('line', line => {
       send({ jsonrpc: '2.0', id: request.id, error: { message: 'queue full', data: { code: 'INPUT_BACKPRESSURE', reason: 'queue full' } } })
       return
     }
+    const input = scope.getStore().input
     input.push(Buffer.from(request.params.data.slice(7), 'base64'))
     if (scenario === 'pty' || scenario === 'control' || scenario.startsWith('pressure')) event(request.params.stream === 'control' ? 'execution.control' : scenario === 'pty' ? 'execution.terminal' : 'execution.stdout', { data: request.params.data })
     send({ jsonrpc: '2.0', id: request.id, result: { accepted_bytes: input.at(-1).length } })
   } else if (request.method === 'closeExecutionInput') {
     send({ jsonrpc: '2.0', id: request.id, result: {} })
     if (scenario === 'echo') {
-      event('execution.stdout', { data: 'base64:' + Buffer.concat(input).toString('base64') })
+      event('execution.stdout', { data: 'base64:' + Buffer.concat(scope.getStore().input).toString('base64') })
       terminal()
     }
   } else if (request.method === 'signalExecution' || request.method === 'resizeExecution') {
@@ -82,5 +92,6 @@ reader.on('line', line => {
     send({ jsonrpc: '2.0', id: request.id, result: { accepted: true } })
     timer = setTimeout(() => terminal(null, { error: { code: 'EXECUTION_CANCELLED', reason: 'cancelled' } }), scenario === 'cancel-delayed' ? 180 : 10)
   }
+  })
 })
 reader.on('close', () => { clearTimeout(timer); process.exit(0) })
