@@ -101,3 +101,25 @@ Published from `03240acc31a0ee91240aa0f952ecb5851313b69d`; public npm `latest` r
 A page terminal in workspace-write printed `NPM_023_HOST_LOSS_READY` while a Node child stayed active. Only the dsh host was forcibly stopped. Audit `sess_1a166509e64_95fc_0.jsonl` recorded `client_disconnected`, `sandbox.enforced: true`, and `cleanup_complete: true`; owner and runner exited. After restarting unmodified dsh, a new page terminal printed `NPM_023_AFTER_HOST_RESTART_OK true`. Audit `sess_1a16651d62c_b0bc_0.jsonl` recorded enforced workspace-write, exit code 0 and complete cleanup after normal terminal exit. No repair, elevation or gate deletion occurred between attempts.
 
 Typecheck, lint, build and 30 focused tests passed, including two native host-loss tests. This Windows test kills the host only; it does not cover killing the owner, an entire OS job or machine power loss. Local screenshot: `web-npm-0.2.3-restart.png` (outside the repository).
+
+## macOS arm64 (mba) native acceptance (2026-10-23)
+
+Environment: mba (Darwin arm64), installed dsh desktop release **0.2.1-rc.2**, npm plugin **0.2.3**, and automatically downloaded **RunSeal 0.2.1 darwin-arm64**. Over SSH, the distribution's own dsh launcher booted an isolated `runseal-acceptance-023` profile using the original dsh base bundle and the plugin installed in the desktop profile. The acceptance driver executed real commands through `ctx.sandbox.confine()` and `ctx.subprocess`. No dsh source or installation files were changed; the desktop profile and active desktop session were left untouched.
+
+| Scenario | Observed result |
+|---|---|
+| Workspace-write | Writing inside the workspace succeeded; writing to the outside test path was denied and no target file existed. |
+| Read-only | Writing inside the workspace was denied and no target file existed. |
+| Cancellation and retry | After a long-running command reported ready, `terminate()` was followed by `done` and `waitForExit()`. The audit recorded cancellation and complete cleanup; the next restricted command printed `MBA_DSH_RETRY_OK` and exited 0. |
+| Unexpected dsh exit | After readiness, SIGKILL targeted only the isolated profile's dsh host. RunSeal recorded client_disconnected and complete cleanup. |
+| Execution after restart | Restarting the same launcher and acceptance profile passed the file-boundary, cancellation and retry checks again. |
+
+Key audit records:
+
+- Initial cancellation: `sess_1a1665562c2_403c_0.jsonl`; retry: `sess_1a166556368_403e_0.jsonl`.
+- Host kill: `sess_1a16655a1f2_4054_0.jsonl`, with `termination_reason: client_disconnected`.
+- Cancellation after restart: `sess_1a16655a6c5_4060_0.jsonl`; retry: `sess_1a16655a76b_4063_0.jsonl`.
+
+These audits all recorded `sandbox.enforced: true` and `cleanup_complete: true`, with workspace-write or read-only as applicable. No RunSeal processes or execution directories under the workspace's `.runseal/runtime` remained. No repair, gate deletion or elevation was used. Scripts and evidence remain under `~/.dsh/runseal-acceptance-023/` on mba; a results copy is retained at `~/.dsh/runseal-preview/mba-0.2.3/results.json` on Windows.
+
+**The macOS native execution paths above are verified working.** RunSeal 0.2.1 still reports backend `runseal-macos-experimental` and status `experimental`; plugin acceptance does not change that upstream support classification. This does not claim validation of macOS UI interaction, PTY/PTC, other architectures, killing the owner itself or an entire process group, or power loss.

@@ -101,3 +101,25 @@ RPC owner 现在脱离 Windows 宿主控制台启动，隐藏窗口，并继续�
 页面在工作区内修改模式下启动终端，Node 子进程输出 `NPM_023_HOST_LOSS_READY` 后持续运行。仅强制结束 dsh 宿主，审计 `sess_1a166509e64_95fc_0.jsonl` 记录 `client_disconnected`、`sandbox.enforced: true` 和 `cleanup_complete: true`，owner 与 runner 均退出。重启未修改的 dsh 后，新页面终端输出 `NPM_023_AFTER_HOST_RESTART_OK true`；正常退出终端后，审计 `sess_1a16651d62c_b0bc_0.jsonl` 记录 enforced workspace-write、退出码 0 和清理完成。两轮之间未执行 repair、提权或删除保护记录。
 
 类型检查、Lint、构建和 30 项针对性测试通过，包含两项原生宿主退出测试。本轮 Windows 验收只结束宿主，不覆盖 owner 被强杀、整个 OS job 被终止或机器断电。截图 `web-npm-0.2.3-restart.png` 保存在本机仓库外。
+
+## macOS arm64（mba）原生验收（2026-10-23）
+
+环境为 mba（Darwin arm64），已安装的 dsh 桌面发行版 **0.2.1-rc.2**、npm 插件 **0.2.3**，以及插件自动下载的 **RunSeal 0.2.1 darwin-arm64**。通过 SSH 使用发行版自带的 dsh 启动器，启动独立 `runseal-acceptance-023` profile，加载原版 dsh 基础包和 desktop profile 已安装的插件；验收驱动通过 `ctx.sandbox.confine()` 和 `ctx.subprocess` 执行真实命令。未修改 dsh 源码或安装包，未修改 desktop profile，也未终止正在使用的桌面会话。
+
+| 场景 | 实测结果 |
+|---|---|
+| 工作区内修改 | 工作区内写入成功；向工作区外的测试路径写入被拒绝，目标文件不存在。 |
+| 只读模式 | 工作区内写入被拒绝，目标文件不存在。 |
+| 取消后重试 | 等待长任务输出就绪后调用 `terminate()`，等待 `done` 和 `waitForExit()`；审计记录 cancelled、清理完成，随后受限命令输出 `MBA_DSH_RETRY_OK`、退出码 0。 |
+| dsh 意外退出 | 长任务就绪后，仅向独立验收 profile 的 dsh 宿主发送 SIGKILL。RunSeal 记录 client_disconnected、清理完成。 |
+| 重启后执行 | 重新使用同一 dsh 启动器和验收 profile，文件边界、取消及重试检查再次全部通过。 |
+
+关键审计记录：
+
+- 首轮取消：`sess_1a1665562c2_403c_0.jsonl`；重试：`sess_1a166556368_403e_0.jsonl`。
+- 宿主强杀：`sess_1a16655a1f2_4054_0.jsonl`，`termination_reason: client_disconnected`。
+- 重启后取消：`sess_1a16655a6c5_4060_0.jsonl`；重试：`sess_1a16655a76b_4063_0.jsonl`。
+
+上述审计均记录 `sandbox.enforced: true` 和 `cleanup_complete: true`，策略对应 workspace-write 或 read-only。结束后未发现 RunSeal 残留进程，工作区 `.runseal/runtime` 下无残留执行目录；全程未调用 repair、删除保护记录或提权。结果与脚本保留在 mba 的 `~/.dsh/runseal-acceptance-023/`，汇总另存于 Windows 的 `~/.dsh/runseal-preview/mba-0.2.3/results.json`。
+
+**结论：上述 macOS 原生执行链路已实测可用。** RunSeal 0.2.1 同时仍报告后端 `runseal-macos-experimental`、状态 `experimental`；本次插件验收不更改上游支持等级。不扩展声称 macOS 页面交互、PTY/PTC、其他架构、owner 本身被强杀、整个进程组被杀或机器断电已通过验收。

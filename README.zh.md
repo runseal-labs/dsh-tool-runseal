@@ -57,7 +57,7 @@ bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注�
 
 ## 安装排查
 
-插件页提示“这个包没有声明组合包”时，先看**安装日志实际装入的版本**，不要只看预览卡片。已有 macOS desktop 安装反馈：卡片显示 0.2.3，但 `pnpm add dsh-tool-runseal` 实际选择了 `^0.1.1`；旧版没有 bundle 声明。安装目标应明确填写 `dsh-tool-runseal@0.2.3`。若 pnpm 拦截刚发布的版本，在对应 profile 的 `pnpm-workspace.yaml` 现有 `minimumReleaseAgeExclude` 列表中只追加 `dsh-tool-runseal@0.2.3`，保留全局发布时间保护。桌面端通常使用 `~/.dsh/profiles/desktop`，Web 使用 `~/.dsh/profiles/web`；保留已有配置，并允许本包 postinstall 脚本。这能解释旧包与声明不匹配，尚不能确定该 Mac 选中旧版的原因，也不代表 macOS 沙箱已验收。
+插件页提示“这个包没有声明组合包”时，先看**安装日志实际装入的版本**，不要只看预览卡片。已有 macOS desktop 安装反馈：卡片显示 0.2.3，但 `pnpm add dsh-tool-runseal` 实际选择了 `^0.1.1`；旧版没有 bundle 声明。安装目标应明确填写 `dsh-tool-runseal@0.2.3`。若 pnpm 拦截刚发布的版本，在对应 profile 的 `pnpm-workspace.yaml` 现有 `minimumReleaseAgeExclude` 列表中只追加 `dsh-tool-runseal@0.2.3`，保留全局发布时间保护。桌面端通常使用 `~/.dsh/profiles/desktop`，Web 使用 `~/.dsh/profiles/web`；保留已有配置，并允许本包 postinstall 脚本。这能解释旧包与声明不匹配，尚不能确定该 Mac 选中旧版的原因，安装问题本身不能证明沙箱可用；后续 mba 原生验收结果见独立验收文档。
 
 ## 配置
 
@@ -92,7 +92,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 - **原生交互 I/O** —— PTY 启动、输入、resize 和 interrupt 通过 RunSeal RPC 接入。控制数据使用子进程 fd 7 上的原生字节管道；关闭输入只封闭后续写入，不发送对端 EOF，子进程通过消息边界完成通信后关闭通道。终端提供真实子进程 PID；interrupt 等待原生 Ctrl-C 写入确认，返回 Windows 控制台根进程 PID。shell 活动保持未知。Windows SIGTERM 通过协议取消并等待控制台进程范围清空；拒绝对终端 shell 执行 SIGKILL，不支持 SIGTSTP 和 SIGHUP。终端终止会等待清理及在途操作完成。
 - **覆盖范围** —— 管理经过 `ctx.subprocess` 的命令；直接使用 `node:child_process` 的代码不受此 provider 管理。
 - **已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。Windows RPC owner 独立于宿主控制台，宿主意外退出后通过管道断连完成清理。强杀 owner 或机器断电仍可能留下保护记录。
-- **平台验证范围** —— 本次在 Windows 做了原生集成验证；未运行 macOS/Linux 实测和 UAC setup。
+- **平台验证范围** —— Windows 与 macOS arm64 已完成原生集成验收。macOS 在 mba 上验证了受限文件写入边界、取消后重试、dsh 宿主被强杀后的自动清理及重启执行，这些链路已实测可用。RunSeal 0.2.1 的 macOS 后端仍自报 experimental；这是后端支持等级，不影响本轮验收通过的事实。未做 Linux 实测、macOS 页面交互或 Windows UAC setup 验收。
 - **Setup** —— 挂载 subprocess provider 前完成 Windows setup；provider 不自动提权。
 - **每个服务只能挂载一个 provider** —— bundle 自动禁用 `sandbox` 和 `subprocess`。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
