@@ -136,3 +136,21 @@ RPC owner 现在脱离 Windows 宿主控制台启动，隐藏窗口，并继续�
 清理成功要求内核正向空集证明、封闭启动入口、绑定进程出生身份的信号、I/O 收尾及持久化恢复阶段；归属未知仍阻止执行。最终成功验收不需要 sudo、额外系统权限、常驻服务或手动 repair。结论限于本机 CLI/服务集成，未声称覆盖 macOS 页面交互、其他系统版本、断电或全部可信清理助手同时消失。
 
 mba 证据：`~/.dsh/runseal-acceptance-023/dsh-final-two-mode-acceptance.json`、`owner-hard-kill-recovery-result.json`。实现与证明边界见 RunSeal 的 `docs/security/2026-10-macos-owned-process-boundary.md`。
+
+## npm 0.2.4 + RunSeal 0.2.2：macOS 发布包验收（2026-10-23）
+
+先从 `2e097f7bdacd116d0f0a2ab186450719c7359bf9` 发布 [RunSeal v0.2.2](https://github.com/runseal-labs/runseal/releases/tag/v0.2.2)，核验六平台归档、校验和及 SBOM；再从 `9ddfff61b6f31511257ac6c9d7f591722303b30e` 发布 npm `dsh-tool-runseal@0.2.4`。已确认 npm latest=0.2.4，插件明确固定二进制版本为 0.2.2。
+
+mba（macOS 15.7.8 arm64）的全新独立 profile 使用普通 `npm install --save-exact dsh-tool-runseal@0.2.4 --registry=https://registry.npmjs.org --foreground-scripts` 安装，独立 npm 缓存避免读取发布前的旧元数据。postinstall 自动下载到包内 `.runseal/0.2.2-darwin-arm64/`，自定义路径为空，也未设置二进制或跳过下载的环境覆盖。归档 SHA-256 为 `1449ab8a448c6d7f2b30b1604ad1e0f656aff4647d0220be79b200e463218bc8`；安装的二进制与公开归档逐字节匹配，并报告 0.2.2 / 协议 v2。
+
+通过未修改的已安装 dsh 0.2.1-rc.2 启动器及原版控制通道 helper，以下六项全部通过：
+
+- 工作区内修改模式 PTC：子进程 fd 7 精确往返 98,304 字节，取消并等待清理，再次启动和往返成功。
+- 同模式 PTY：真实 TTY、输入、80x24 → 100x30 resize、raw ETX、取消及再次交互启动成功。
+- 原生 SIGINT：确认投递到有效前台进程组，应用确认收到，再取消并等待清理。
+- 仅 SIGKILL 独立 dsh 宿主：审计 `sess_1a1671240f9_9515_0.jsonl` 记录 client_disconnected、受限策略生效及完整清理，目标子进程已不存在。
+- 宿主重启后，PTC 取消重试和 PTY 取消重启分别再次通过。
+
+十条执行审计全部报告 RunSeal 0.2.2、sandbox.enforced=true、cleanup_complete=true。结束后无 cohort 注册任务、归属记录或执行运行目录残留。未执行 repair、未提权、未修改 dsh 或活跃桌面 profile。本轮属于原生 CLI/服务验收，不代表 macOS 页面交互验收。mba 结果：`~/.dsh/runseal-acceptance-024/npm-024-acceptance.json`。
+
+验收驱动曾修正 profile 字段为 dsh.profile.bundles，并在审计文件仍写入时只解析换行完整的记录；产品代码、清理断言和超时均未改动。Linux/macOS CI 通过。独立 Windows prepared-conformance 在工作区写入用例触发 30 秒执行超时，清理成功；发布工作流本身通过。本轮 macOS 验收不声称该 Windows CI 任务已通过。

@@ -99,7 +99,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 ## 验证
 
-RunSeal 0.2.2 新增 macOS PTY/控制通道及持久化 owner 恢复，插件 0.2.4 固定下载该版本。macOS 15.7.8 arm64 源码验收已覆盖取消重启、宿主退出清理及 RPC owner 强杀恢复；发布包验收另记于独立验收文档。
+RunSeal 0.2.2 新增 macOS PTY/控制通道及持久化 owner 恢复，插件 0.2.4 固定下载该版本。macOS 15.7.8 arm64 源码验收已覆盖取消重启、宿主退出清理及 RPC owner 强杀恢复；mba 上 npm 0.2.4 全新安装也已通过受限 PTY/PTC 取消重试、宿主退出清理和重启执行，详见发布包验收记录。
 
 原生测试、Web profile 验收、审计证据和平台边界见[验收记录](https://github.com/runseal-labs/dsh-tool-runseal/blob/main/docs/acceptance.zh.md)。
 

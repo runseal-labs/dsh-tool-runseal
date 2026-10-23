@@ -136,3 +136,21 @@ Tested on mba, macOS 15.7.8 arm64, through the unmodified dsh 0.2.1-rc.2 launche
 The implementation requires positive kernel emptiness evidence, sealed launch admission, birth-bound signalling, joined I/O and durable recovery phases before reporting cleanup. Unknown ownership remains blocked. No sudo, additional system permission, persistent service or manual repair was needed for the successful final acceptance runs. This covers the tested CLI/service integration, not macOS page interaction, other OS versions, power loss or simultaneous loss of every trusted cleanup helper.
 
 Evidence on mba: `~/.dsh/runseal-acceptance-023/dsh-final-two-mode-acceptance.json` and `owner-hard-kill-recovery-result.json`. Architecture and proof boundaries are documented in RunSeal's `docs/security/2026-10-macos-owned-process-boundary.md`.
+
+## npm 0.2.4 with RunSeal 0.2.2: macOS published-package acceptance (2026-10-23)
+
+RunSeal [v0.2.2](https://github.com/runseal-labs/runseal/releases/tag/v0.2.2) was published first from `2e097f7bdacd116d0f0a2ab186450719c7359bf9`; its six native archives, checksums and SBOM were verified. npm `dsh-tool-runseal@0.2.4` was then published from `9ddfff61b6f31511257ac6c9d7f591722303b30e`, with `latest` confirmed as 0.2.4 and an explicit binary pin of 0.2.2.
+
+On mba (macOS 15.7.8 arm64), a fresh isolated profile used ordinary `npm install --save-exact dsh-tool-runseal@0.2.4 --registry=https://registry.npmjs.org --foreground-scripts`. A separate npm cache avoided stale pre-publication metadata. Postinstall downloaded the executable into the installed package's `.runseal/0.2.2-darwin-arm64/`; no custom executable or download override was set. The archive SHA-256 was `1449ab8a448c6d7f2b30b1604ad1e0f656aff4647d0220be79b200e463218bc8`; the installed binary matched the public archive byte-for-byte and reported 0.2.2 / protocol v2.
+
+All six acceptance cases passed through the unmodified installed dsh 0.2.1-rc.2 launcher and original control helper:
+
+- Workspace-write PTC at child fd 7: exact 98,304-byte round trip, cancellation joined, then a fresh successful round trip.
+- Workspace-write PTY: real TTY, input, resize 80x24 to 100x30, raw ETX delivery, cancellation and fresh interactive startup.
+- Native SIGINT: a positive foreground process-group delivery and application acknowledgement, followed by joined cancellation.
+- SIGKILL of only the isolated dsh host: audit `sess_1a1671240f9_9515_0.jsonl` recorded `client_disconnected`, enforced workspace-write and complete cleanup; the target child was absent.
+- After host restart, both PTC cancellation/retry and PTY cancellation/restart passed again.
+
+All ten execution audits reported RunSeal 0.2.2, `sandbox.enforced: true` and `cleanup_complete: true`. No cohort jobs, ownership records or execution runtime directories remained. No repair, elevation, dsh modification or changes to the active desktop profile were needed. This is native CLI/service acceptance, not a macOS page-interaction claim. Results: `~/.dsh/runseal-acceptance-024/npm-024-acceptance.json` on mba.
+
+The acceptance driver was corrected to use `dsh.profile.bundles` and to parse only newline-complete audit records while a writer was active. Production code, cleanup assertions and deadlines were unchanged. Linux/macOS CI passed. The separate Windows prepared-conformance job timed out after 30 seconds in the workspace-write filesystem case, with complete cleanup; the release workflow itself passed. This macOS acceptance does not claim that Windows CI job passed.
