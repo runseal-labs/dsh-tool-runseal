@@ -8,7 +8,7 @@
 
 ## 适配基线
 
-适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。自动安装要求 RunSeal **0.2.1**，包含 `ee871b0` 的 RFC-0022 控制传输与终端身份改动。此前本机验收使用该提交，但当时二进制仍报告 `0.2.0`；实际 `v0.2.0` release tag 指向 `8c18b10`，不含这些改动。RunSeal 使用 `main` 分支，没有 `master`。
+适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件版本与固定的 RunSeal 版本保持一致。自动安装要求 RunSeal **0.2.1**，包含 `ee871b0` 的 RFC-0022 控制传输与终端身份改动。此前本机验收使用该提交，但当时二进制仍报告 `0.2.0`；实际 `v0.2.0` release tag 指向 `8c18b10`，不含这些改动。RunSeal 使用 `main` 分支，没有 `master`。
 
 ## 功能
 
@@ -24,7 +24,7 @@
 
 ## 安装
 
-通过 `dsh plugin --profile web add dsh-tool-runseal` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。下一版插件在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.1**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。已发布的插件 0.2.0 仍需单独安装二进制。RunSeal 0.2.0 尚未包含完整原生终端/控制契约，不能作为下载目标。
+通过 `dsh plugin --profile web add dsh-tool-runseal` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.1 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.1**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。已发布的插件 0.2.0 仍需单独安装二进制。RunSeal 0.2.0 尚未包含完整原生终端/控制契约，不能作为下载目标。
 
 支持下载 Windows、macOS、Linux 的 x64 / arm64 版本；固定版本 URL，不跟随 `latest`。提供二进制不代表各系统都支持受限策略。需要可访问 GitHub releases，并允许 npm 安装脚本；下载或校验失败会明确报错。若包管理器默认禁用脚本，需允许本包安装脚本，或启用脚本后执行 `npm rebuild dsh-tool-runseal`。运行时不自动下载，也不会静默降级为无沙箱执行。
 

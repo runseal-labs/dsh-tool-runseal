@@ -8,7 +8,7 @@ Fully out-of-tree: depends only on published dsh base packages. Registers both `
 
 ## Compatibility
 
-Adapted against unmodified dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Automatic installation requires RunSeal **0.2.1**, including the RFC-0022 transport and terminal identity changes from `ee871b0`. Earlier local acceptance used that commit while its binary still reported `0.2.0`; the actual `v0.2.0` release tag points to `8c18b10` and lacks those changes. RunSeal uses `main`, not `master`.
+Adapted against unmodified dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin releases use the same version as their pinned RunSeal release. Automatic installation requires RunSeal **0.2.1**, including the RFC-0022 transport and terminal identity changes from `ee871b0`. Earlier local acceptance used that commit while its binary still reported `0.2.0`; the actual `v0.2.0` release tag points to `8c18b10` and lacks those changes. RunSeal uses `main`, not `master`.
 
 ## What it provides
 
@@ -24,7 +24,7 @@ Adapted against unmodified dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e
 
 ## Install
 
-Install the bundle with `dsh plugin --profile web add dsh-tool-runseal`, then restart dsh and open Plugins → RunSeal. The next plugin release downloads **RunSeal 0.2.1** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package. Published plugin 0.2.0 still requires a separately installed executable. RunSeal 0.2.0 predates the native terminal/control contract and is not a supported download target.
+Install the bundle with `dsh plugin --profile web add dsh-tool-runseal`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.1 downloads **RunSeal 0.2.1** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package. Published plugin 0.2.0 still requires a separately installed executable. RunSeal 0.2.0 predates the native terminal/control contract and is not a supported download target.
 
 Supported downloads: Windows, macOS and Linux on x64 or arm64. Downloads use a fixed release URL, never `latest`. Binary availability does not imply that every OS supports restricted policies. Network access to GitHub releases and enabled npm lifecycle scripts are required; installation fails with a diagnostic on download/checksum errors. For package managers that block scripts, allow this package's install script or run `npm rebuild dsh-tool-runseal` with scripts enabled. No runtime download or silent unrestricted fallback occurs.
 
