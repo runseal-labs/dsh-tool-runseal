@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 import { unzipSync } from 'fflate'
 import { x as extractTar } from 'tar'
 
-/** Pinned to the matching npm package version; never resolve `latest`. */
+/** Explicit native release pin; plugin-only patches need not change it. Never resolve `latest`. */
 export const RUNSEAL_VERSION = '0.2.1'
 const releaseRoot = `https://github.com/runseal-labs/runseal/releases/download/v${RUNSEAL_VERSION}`
 const packageRoot = fileURLToPath(new URL('../', import.meta.url))
