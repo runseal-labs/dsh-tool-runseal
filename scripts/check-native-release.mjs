@@ -1,4 +1,8 @@
+import { readFile } from 'node:fs/promises'
 import { binaryTarget, RUNSEAL_VERSION } from '../lib/binary.js'
+
+const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+if (version !== RUNSEAL_VERSION) throw new Error(`Plugin ${version} must match RunSeal ${RUNSEAL_VERSION}`)
 
 // npm must not advertise automatic installation until its pinned release is public.
 const tag = `v${RUNSEAL_VERSION}`

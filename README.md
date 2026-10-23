@@ -42,7 +42,7 @@ Install the built package into the Web profile and add dsh-tool-runseal to dsh.p
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.3.0.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.1.tgz
 ```
 
 The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It uses the automatically downloaded binary by default. To override it, add this to the profile cordis.patch.yml:

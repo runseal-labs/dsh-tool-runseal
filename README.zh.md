@@ -42,7 +42,7 @@ runseal setup windows-sandbox --cwd <workspace> --elevate
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.3.0.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.1.tgz
 ```
 
 bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认使用自动下载的二进制。需要覆盖时，在 profile 的 cordis.patch.yml 中添加：
