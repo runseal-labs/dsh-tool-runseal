@@ -235,3 +235,22 @@ PTY 重试实例继续用于宿主退出测试。PTC 代码成功返回后，dsh
 大消息曾暴露 INPUT_BACKPRESSURE：RunSeal 有 256 KiB 待写队列，拒绝表示本次块未入队。插件现只重试这一明确拒绝的块，RPC 轮次之间让出 I/O，不增加 sleep、超时或重复已接受的块；持续背压时仍可取消。新增定向测试覆盖精确字节、不重复和背压中的取消清理。准备工具已用真实安装包运行，58 项插件测试通过、4 项需显式启用的测试跳过；桌面原生验收单独执行。
 
 原桌面 EXE 的拒绝读取 ACL 前后 SDDL 一致，未 repair、提权、删除保护记录或放宽断言。此为 Windows 原生桌面服务验收，不是页面操作验收，也不声称覆盖 persistent 模式、机器断电或强杀 RPC owner。证据保留于 `~/.dsh/runseal-preview/desktop-ptc/`，运行时副本与生成配置在 `~/.dsh/runseal-runtime/ptc/`；验收驱动为 `tests/desktop-ptc-driver.mjs`。
+
+## npm 0.2.5 发布与 desktop profile 验收（2026-10-23）
+
+插件从提交 [`536fd9938a14e5ca54f9ce028130d5809b6f1a80`](https://github.com/runseal-labs/dsh-tool-runseal/commit/536fd9938a14e5ca54f9ce028130d5809b6f1a80) 打包，发布为 [npm 0.2.5](https://www.npmjs.com/package/dsh-tool-runseal/v/0.2.5)，仍固定 RunSeal 0.2.2。registry 已确认 latest=0.2.5，公开包完整性与已验证 tarball 一致：
+
+```text
+sha512-GtC5YEROUWFT049x6wws0fGOeRdbp4aRDvM95VjrOOoJyqQMewXZNDLzeh02uqMxuZkPuC3dFb457XhexprJNA==
+```
+
+发布前 typecheck、lint、构建、原生发布检查通过；58 项测试通过、4 项显式跳过。tarball 在全新目录普通 npm 安装通过，自动下载二进制报告 RunSeal 0.2.2 / 协议 v2。公开版本可读后，desktop profile 改用 registry 的精确依赖 0.2.5，替换本地 file tarball；lockfile 完整性与上述哈希一致。postinstall 自动下载 RunSeal 0.2.2，二进制 SHA-256 仍为 `029e04eb0ae8fed8f524e0a0ec391d247abf8617eda5c46cca098f2fc4f4e336`。本地 tarball 的脚本授权已移除，仅为 0.2.5 添加精确版本的发布时间豁免和安装脚本许可；一般策略保留。独立 Node 和官方 bootstrap 配置保留，桌面已重新启动。
+
+使用实际 desktop profile 的 npm 安装包、自动二进制和原版桌面 Electron 宿主，在独立验收 profile 完成受限 PTC 原生服务验收：
+
+- 真实 host binding 往返 `{answer:42}`、294,912 字节 UTF-8 中文字符串；worker 确认为独立 Node。
+- binding 确认就绪后取消，等待 abort 和清理，再次运行返回 43。
+- 只强杀独立验收宿主。审计 `sess_1a167a94ce6_3eec_0.jsonl` 记录 client_disconnected、受限策略生效、完整清理；owner、worker、Node 后代进程及执行目录全部消失。
+- 重启后交互、取消和重试再次通过。审计为 `sess_1a167a9a96a_1094_0.jsonl`、`sess_1a167a9afdb_a648_0.jsonl`、`sess_1a167a9b528_93d0_0.jsonl`。
+
+七份执行审计全部确认 RunSeal 0.2.2、sandbox.enforced=true、cleanup_complete=true 和运行目录已移除。PTC 正常返回后 dsh 会取消 worker，因此成功调用的进程终态仍可记为 cancelled；成功依据同时包含原始返回值、控制通道流量和清理证明。未改 dsh、未 repair、未提权或放宽 ACL。本轮是原生桌面服务验收，不是页面点击验收；不扩展到 persistent 模式或强杀 owner。证据位于 `~/.dsh/runseal-preview/release-025/`，包括公开 registry 元数据、打包与安装记录、host-loss-result.json、audit-results.json 及重启日志。

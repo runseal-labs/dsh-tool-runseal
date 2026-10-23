@@ -235,3 +235,22 @@ An isolated acceptance profile used the installed plugin and downloaded binary, 
 The large message exposed INPUT_BACKPRESSURE from RunSeal's 256 KiB pending queue: rejection means the chunk was not enqueued. The plugin now retries only explicitly unaccepted chunks, yielding to I/O between RPC turns, without adding sleeps, extending timeouts or replaying acknowledged data. Cancellation remains available under sustained backpressure. Focused tests assert exact bytes, no duplication and cancellation cleanup. The preparation tool ran against the real installation; 58 plugin tests passed and four opt-in tests were skipped, with desktop native acceptance run separately.
 
 The original executable's read-deny ACL retained identical SDDL. No repair, elevation, gate deletion or weakened assertions were used. This is Windows native desktop service acceptance, not page interaction or evidence for persistent mode, power loss or killing the RPC owner. Evidence remains under `~/.dsh/runseal-preview/desktop-ptc/`; runtime copies and generated configuration are under `~/.dsh/runseal-runtime/ptc/`. The driver is `tests/desktop-ptc-driver.mjs`.
+
+## npm 0.2.5 release and desktop profile acceptance (2026-10-23)
+
+The plugin was packed from [`536fd9938a14e5ca54f9ce028130d5809b6f1a80`](https://github.com/runseal-labs/dsh-tool-runseal/commit/536fd9938a14e5ca54f9ce028130d5809b6f1a80) and published as [npm 0.2.5](https://www.npmjs.com/package/dsh-tool-runseal/v/0.2.5), still pinning RunSeal 0.2.2. Registry latest is 0.2.5 and its public integrity matches the verified tarball:
+
+```text
+sha512-GtC5YEROUWFT049x6wws0fGOeRdbp4aRDvM95VjrOOoJyqQMewXZNDLzeh02uqMxuZkPuC3dFb457XhexprJNA==
+```
+
+Typecheck, lint, build and native-release checks passed; 58 tests passed and four were explicitly skipped. Ordinary npm installation of the tarball into a fresh directory automatically downloaded RunSeal 0.2.2 / protocol v2. Once the public version was readable, the desktop profile switched from its local file tarball to exact registry dependency 0.2.5. The lockfile integrity matches above. Postinstall downloaded RunSeal 0.2.2, with binary SHA-256 `029e04eb0ae8fed8f524e0a0ec391d247abf8617eda5c46cca098f2fc4f4e336`. The local tarball script allowance was removed; only exact-version age and script allowances were added for 0.2.5, preserving the general policy. Standalone Node and official bootstrap configuration were retained, and the desktop app restarted.
+
+The actual desktop profile's npm package, automatic binary and original desktop Electron host passed restricted native PTC service acceptance in an isolated profile:
+
+- Real host bindings round-tripped `{answer:42}` and a 294,912-byte UTF-8 string; the worker identified as standalone Node.
+- Cancellation followed a positive readiness binding, joined abort/cleanup, and a subsequent run returned 43.
+- Only the isolated host was hard-killed. Audit `sess_1a167a94ce6_3eec_0.jsonl` recorded client_disconnected, enforced confinement and complete cleanup. Owner, worker, Node descendant and runtime directory disappeared.
+- After restart, interaction, cancellation and retry passed again: audits `sess_1a167a9a96a_1094_0.jsonl`, `sess_1a167a9afdb_a648_0.jsonl`, `sess_1a167a9b528_93d0_0.jsonl`.
+
+All seven execution audits confirmed RunSeal 0.2.2, sandbox.enforced=true, cleanup_complete=true and removed runtime directories. Successful PTC evaluation is followed by dsh worker cancellation, so a successful call may still have a cancelled process terminal record; proof also includes original return values, control traffic and cleanup. No dsh modification, repair, elevation or ACL relaxation occurred. This is native desktop service acceptance, not page-click testing, persistent-mode coverage or owner-hard-kill recovery. Evidence remains under `~/.dsh/runseal-preview/release-025/`, including public metadata, packing/install logs, host-loss-result.json, audit-results.json and restart logs.
