@@ -18,6 +18,56 @@ function spec(extra: Partial<SubprocessSpawnSpec> = {}): SubprocessSpawnSpec {
 }
 
 describe('RunSeal subprocess lifecycle', () => {
+  it('reuses one owner while cancellation, output and later executions stay independent', async () => {
+    const ctx = await mount('shared')
+    try {
+      const first = ctx.subprocess.spawn(spec({ argv: [process.execPath, 'hold', 'first'] }))
+      const second = ctx.subprocess.spawn(spec({ argv: [process.execPath, 'hold', 'second'] }))
+      await expect.poll(() => first.collected.stdout!.readFrom(0).text).toContain('owner')
+      await expect.poll(() => second.collected.stdout!.readFrom(0).text).toContain('owner')
+      const a = JSON.parse(first.collected.stdout!.readFrom(0).text)
+      const b = JSON.parse(second.collected.stdout!.readFrom(0).text)
+      expect(a.owner).toBe(b.owner)
+      expect(a.executionId).not.toBe(b.executionId)
+      expect(a.argv).toContain('first')
+      expect(b.argv).toContain('second')
+      let secondFinished = false
+      void second.done.then(() => { secondFinished = true })
+      first.terminate()
+      expect(await first.done).toMatchObject({ signal: 'SIGTERM' })
+      expect(await first.waitForExit()).toBe(true)
+      expect(secondFinished).toBe(false)
+      const next = ctx.subprocess.spawn(spec())
+      await next.done
+      expect(JSON.parse(next.collected.stdout!.readFrom(0).text).owner).toBe(a.owner)
+      second.terminate()
+      await second.done
+      await ctx.fiber.dispose()
+      expect(() => process.kill(a.owner, 0)).toThrow()
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('does not share transport environments and replaces a lost owner', async () => {
+    const ctx = await mount('shared')
+    try {
+      async function owner(env: Record<string, string>) {
+        const handle = ctx.subprocess.spawn(spec({ env }))
+        await handle.done
+        return JSON.parse(handle.collected.stdout!.readFrom(0).text).owner as number
+      }
+      const first = await owner({ RUNSEAL_REUSE_TEST: 'a' })
+      const other = await owner({ RUNSEAL_REUSE_TEST: 'b' })
+      expect(other).not.toBe(first)
+      expect(await owner({ RUNSEAL_REUSE_TEST: 'a' })).toBe(first)
+      process.kill(first)
+      await expect.poll(() => { try { process.kill(first, 0); return true } catch { return false } }).toBe(false)
+      // A write racing owner loss may fail; never replay an execution whose admission is unknown.
+      try { expect(await owner({ RUNSEAL_REUSE_TEST: 'a' })).not.toBe(first) }
+      catch (error) { expect(String(error)).toMatch(/EPIPE|exited|destroyed/) }
+      expect(await owner({ RUNSEAL_REUSE_TEST: 'a' })).not.toBe(first)
+    } finally { await ctx.fiber.dispose() }
+  })
+
   it('reports an unavailable runner as structured sandbox failure and proves no launch', async () => {
     const ctx = new Context()
     await ctx.plugin(Plugin, { command: join(process.cwd(), 'missing-runseal-4627'), autoSetup: false })

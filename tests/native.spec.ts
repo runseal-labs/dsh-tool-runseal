@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, rm, readFile, access } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, mkdir, rm, readFile, access, copyFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { createRequire } from 'node:module'
@@ -10,6 +11,77 @@ import * as Plugin from '../src/index.ts'
 const binary = process.env.RUNSEAL_TEST_BINARY
 
 describe.skipIf(!binary)('native RunSeal through dsh services', () => {
+  it.skipIf(process.platform !== 'win32')('cancels during a native preparation barrier without closing its peer preparation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'runseal-native-prepare-'))
+    const ctx = new Context()
+    const runner = join(root, 'runseal.exe')
+    await copyFile(resolve(binary!), runner)
+    await copyFile(join(resolve(binary!, '..'), 'runseal-command-runner.exe'), join(root, 'runseal-command-runner.exe'))
+    execFileSync('rustc', [resolve('tests/fixtures/setup-barrier.rs'), '-o', join(root, 'runseal-windows-sandbox-setup.exe')], { windowsHide: true })
+    await ctx.plugin(Plugin, { command: runner, autoSetup: false, timeoutMs: 30000 })
+    try {
+      async function start(marker: string) {
+        const confined = await ctx.sandbox.confine([process.execPath, '-e', `console.log(${JSON.stringify(marker)})`], { mode: 'workspace-write', workspaceRoot: root })
+        return ctx.subprocess.spawn({ argv: confined.argv, cwd: root, graceMs: 2000,
+          env: { RUNSEAL_PREPARATION_BARRIER: root, RUNSEAL_PREPARATION_HELPER: join(resolve(binary!, '..'), 'runseal-windows-sandbox-setup.exe') },
+          stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } } })
+      }
+      const cancelled = await start('MUST_NOT_LAUNCH')
+      await expect.poll(async () => { try { return await readFile(join(root, 'preparation-entered'), 'utf8') } catch { return '' } }, { timeout: 15000 }).toMatch(/^\d+$/)
+      const helperPid = Number(await readFile(join(root, 'preparation-entered'), 'utf8'))
+      const peer = await start('PEER_PREPARED')
+      cancelled.terminate()
+      // The native setup request is blocked at a proven barrier, not a timing guess.
+      expect(() => process.kill(helperPid, 0)).not.toThrow()
+      expect(peer.collected.stdout!.readFrom(0).text).not.toContain('PEER_PREPARED')
+      await writeFile(join(root, 'release-preparation'), '')
+      expect(await cancelled.waitForExit()).toBe(true)
+      expect(cancelled.collected.stdout!.readFrom(0).text).not.toContain('MUST_NOT_LAUNCH')
+      expect((await peer.done).exitCode).toBe(0)
+      expect(peer.collected.stdout!.readFrom(0).text).toContain('PEER_PREPARED')
+      expect(Number(await readFile(join(root, 'preparation-entered'), 'utf8'))).toBe(helperPid)
+      expect(() => process.kill(helperPid, 0)).not.toThrow()
+      const retry = await start('PREPARE_REUSED')
+      expect((await retry.done).exitCode).toBe(0)
+      expect(retry.collected.stdout!.readFrom(0).text).toContain('PREPARE_REUSED')
+      expect(Number(await readFile(join(root, 'preparation-entered'), 'utf8'))).toBe(helperPid)
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60000)
+
+  it('keeps a concurrent execution alive through cancellation and admits another on the shared owner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'runseal-native-shared-'))
+    const ctx = new Context()
+    await ctx.plugin(Plugin, { command: resolve(binary!), autoSetup: false, timeoutMs: 20000 })
+    try {
+      async function start(code: string) {
+        const confined = await ctx.sandbox.confine([process.execPath, '-e', code], { mode: 'workspace-write', workspaceRoot: root })
+        return ctx.subprocess.spawn({ argv: confined.argv, cwd: root, graceMs: 2000,
+          stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } } })
+      }
+      const a = await start('console.log("FIRST");setInterval(()=>{},1000)')
+      const b = await start('console.log("SECOND");setInterval(()=>{},1000)')
+      await expect.poll(() => a.collected.stdout!.readFrom(0).text, { timeout: 15000 }).toContain('FIRST')
+      await expect.poll(() => b.collected.stdout!.readFrom(0).text, { timeout: 15000 }).toContain('SECOND')
+      let ended = false
+      void b.done.then(() => { ended = true })
+      a.terminate()
+      expect(await a.done).toMatchObject({ signal: 'SIGTERM' })
+      expect(await a.waitForExit()).toBe(true)
+      const c = await start('console.log("AFTER_CANCEL")')
+      expect((await c.done).exitCode).toBe(0)
+      expect(c.collected.stdout!.readFrom(0).text).toContain('AFTER_CANCEL')
+      expect(ended).toBe(false)
+      b.terminate()
+      expect(await b.waitForExit()).toBe(true)
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60000)
+
   it('preserves cwd, streams stdin, enforces write roots and terminates an active execution', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-runseal-test-'))
     const workspace = join(root, 'workspace')

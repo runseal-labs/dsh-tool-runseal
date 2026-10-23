@@ -65,8 +65,16 @@ function output(mode: SubprocessOutputMode, stream: 'stdout' | 'stderr') {
   }
 }
 
+interface RpcConnection {
+  client: RunsealRpcClient
+  listeners: Set<(event: Record<string, unknown>) => void>
+  retired: boolean
+}
+
 export class RunsealSubprocessRuntime extends SubprocessRuntime {
   private readonly live = new Set<SubprocessHandle>()
+  private readonly connections = new Map<string, RpcConnection>()
+  private readonly ownedConnections = new Set<RpcConnection>()
   private disposed = false
 
   constructor(ctx: Context, private readonly config: ResolvedEngineConfig | (() => ResolvedEngineConfig)) {
@@ -76,7 +84,10 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       const handles = [...this.live]
       for (const handle of handles) handle.terminate()
       const results = await Promise.allSettled(handles.map(handle => handle.waitForExit()))
-      const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+      const closed = await Promise.allSettled([...this.ownedConnections].map(connection => connection.client.close()))
+      this.connections.clear()
+      this.ownedConnections.clear()
+      const failures = [...results, ...closed].flatMap(result => result.status === 'rejected' ? [result.reason] : [])
       if (failures.length) throw new AggregateError(failures, 'runseal: cleanup could not be verified')
     }, 'runseal subprocess teardown')
   }
@@ -192,7 +203,9 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       if (home) env.RUNSEAL_WINDOWS_SANDBOX_HOME = resolve(home)
     }
     const transport = { command: config.command, args: config.args, env, replaceEnv: true }
-    const client = new RunsealRpcClient(transport, event => {
+    let client: RunsealRpcClient
+    let connection: RpcConnection | undefined
+    const onEvent = (event: Record<string, unknown>) => {
       if (event.execution_id !== executionId) return
       if (event.type === 'execution.started') {
         if (!Number.isSafeInteger(event.process_id) || (event.process_id as number) <= 0) {
@@ -209,7 +222,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
         const sink = event.type === 'execution.stderr' ? stderr : stdout
         sink.write(Buffer.from(event.data.slice(7), 'base64'))
       }
-    })
+    }
     const cancel = () => {
       if (terminal || cancelSent || !executionId) return
       cancelSent = true
@@ -268,7 +281,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     }) : undefined
     control?.on('error', error => { if (!terminal && !cancelled) { ioFailure = error; terminate() } })
     input.on('error', error => { if (!terminal && !cancelled) { ioFailure = error; terminate() } })
-    async function finish(result?: Record<string, unknown>, error?: unknown) {
+    const finish = async (result?: Record<string, unknown>, error?: unknown) => {
       const originalError = error
       if (error && confinement && confinement.policy !== 'danger-full-access'
           && !spec.signal?.aborted && !(error instanceof SubprocessExecutableNotFoundError)
@@ -287,7 +300,12 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       const clean = result ? result.cleanup_complete === true
         : originalError instanceof RpcError && originalError.code !== 'EXECUTION_CLEANUP_FAILED' && originalError.data.cleanup_complete !== false
       const noLaunch = !submitted
-      await client.close()
+      connection?.listeners.delete(onEvent)
+      if (connection && submitted && !clean) connection.retired = true
+      if (connection?.retired && connection.listeners.size === 0) {
+        await connection.client.close()
+        this.ownedConnections.delete(connection)
+      }
       settled = true
       if (clean || noLaunch) quiescent.resolve()
       else quiescent.reject(error ?? new Error('runseal: terminal did not confirm cleanup_complete'))
@@ -322,6 +340,20 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       try {
         // Prove runner availability before treating execute as submitted.
         transport.command = await resolveProgram(config.command, env, process.cwd(), spec.signal)
+        if (this.disposed) throw new Error('runseal: subprocess provider disposed')
+        const key = JSON.stringify([transport.command, transport.args,
+          Object.entries(env).sort(([a], [b]) => a.localeCompare(b))])
+        connection = this.connections.get(key)
+        if (!connection || connection.retired || !connection.client.usable) {
+          const listeners = new Set<(event: Record<string, unknown>) => void>()
+          connection = { client: new RunsealRpcClient(transport, event => {
+            for (const listener of listeners) listener(event)
+          }), listeners, retired: false }
+          this.connections.set(key, connection)
+          this.ownedConnections.add(connection)
+        }
+        client = connection.client
+        connection.listeners.add(onEvent)
         let policy: unknown = confinement?.policy ?? 'danger-full-access'
         const network = confinement?.network ?? config.networkMode
         if (confinement?.policy === 'workspace-write') {

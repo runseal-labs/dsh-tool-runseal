@@ -87,7 +87,7 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 `enforcement: full` 描述已准入执行对 dsh 所承诺文件效果的完整强制，包括后端定义的临时目录写入；不代表网络隔离、读隔离、后端支持等级稳定或能阻止所有沙箱逃逸。RunSeal 必须拒绝无法强制的策略，不能降级透传；macOS 的 experimental 是另一维度的成熟度标记。该声明以成功准入为条件，`confine()` 本身不执行能力探测。
 
-每个 handle 持有自己的 RPC 连接。`execute` 先返回准入回执，输出通过事件传递，输入使用 `writeExecutionInput` / `closeExecutionInput`。`terminate()` 和 AbortSignal 通过同一连接发送 `cancelExecution`；回执前收到的取消会排队等待 execution ID，不杀 RPC owner。取消确认不代表清理完成：`done` 和 `waitForExit()` 等待终态 `cleanup_complete: true`，再等待 RPC owner 退出。连接丢失或缺少清理证明会明确拒绝，不能声称进程范围已清空。插件卸载时取消全部活跃执行并等待清理。
+subprocess provider 在自身生命周期内复用 RPC 连接，按可执行文件、参数和 transport 环境隔离。每次执行仍有独立的 ID、输入输出、取消和终态清理证明。`done` 和 `waitForExit()` 要求 `cleanup_complete: true`，不再等待共享 owner 退出。连接丢失会使相关执行失败，不自动重放；后续调用可重建连接。缺少清理证明的连接停止接收新执行，等待剩余执行结束后关闭。provider 卸载时取消并等待全部执行，再关闭连接、等待 owner 退出。Windows 源码构建复用不提权的 ACL refresh worker，每次执行的临时目录仍独立准备；协议关闭时等待 worker 退出。这些源码改动需要同时重建插件和原生二进制；已发布的 0.2.5 / 0.2.2 包仍保持原有行为。
 
 输出收集复用 dsh 公开的有限尾部缓存与溢出文件工具。显式环境变量仍受 RunSeal 策略约束，被擦除策略禁止的键会明确报错。设为 `subprocess: false` 时，其他消费者仍启动独立 wrapper，其已有生命周期限制继续存在。
 
