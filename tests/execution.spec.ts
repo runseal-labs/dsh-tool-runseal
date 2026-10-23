@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { basename, isAbsolute } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as Plugin from '../src/index.ts'
 import { LocalSubprocessRuntime } from '@deepseek-ai/dsh-subprocess-local'
@@ -11,9 +12,9 @@ const fake = fileURLToPath(new URL('./fake-runseal.cjs', import.meta.url))
 function config(scenario: string) {
   return resolveEngineConfig({ command: process.execPath, args: [fake, scenario] })
 }
-async function runWrapper(scenario: string, input = '') {
+async function runWrapper(scenario: string, input = '', argv = [process.execPath]) {
   const provider = new RunsealSandboxProvider(new Context(), () => ({ ...config(scenario), timeoutMs: 1000, autoSetup: false }))
-  const confined = await provider.confine(['unused'], { mode: 'read-only', workspaceRoot: process.cwd() })
+  const confined = await provider.confine(argv, { mode: 'read-only', workspaceRoot: process.cwd() })
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(confined.argv[0]!, confined.argv.slice(1), { stdio: 'pipe' })
     let stdout = '', stderr = ''
@@ -27,6 +28,13 @@ async function runWrapper(scenario: string, input = '') {
 }
 
 describe('wrapper process', () => {
+  it('resolves a bare executable before the standalone wrapper submits RPC', async () => {
+    const result = await runWrapper('argv', '', [basename(process.execPath), 'one argument'])
+    expect(result.code).toBe(0)
+    const request = JSON.parse(result.stdout)
+    expect(isAbsolute(request.command[0])).toBe(true)
+    expect(request.command.slice(1)).toEqual(['one argument'])
+  })
   it('uses configured command/args, waits beyond receipt and streams output without duplicates', async () => {
     expect(await runWrapper('output')).toEqual({ code: 7, stdout: '你好', stderr: 'diagnostic' })
   })
@@ -48,15 +56,15 @@ describe('wrapper process', () => {
 describe('async sandbox and RPC execution', () => {
   it('rejects an already cancelled confine call', async () => {
     const provider = new RunsealSandboxProvider(new Context(), () => ({ ...config('output'), timeoutMs: 1000, autoSetup: false }))
-    await expect(provider.confine(['unused'], { mode: 'read-only', workspaceRoot: process.cwd() }, AbortSignal.abort())).rejects.toThrow()
+    await expect(provider.confine([process.execPath], { mode: 'read-only', workspaceRoot: process.cwd() }, AbortSignal.abort())).rejects.toThrow()
   })
   it('engine awaits terminal completion and assembles streamed output', async () => {
     const engine = new RunsealEngine(config('stream-only'), undefined)
-    expect(await engine.execute(['unused'], process.cwd(), 'read-only')).toMatchObject({ exitCode: 7, stdout: '你好', stderr: 'diagnostic', executionId: 'exec_fixture' })
+    expect(await engine.execute([process.execPath], process.cwd(), 'read-only')).toMatchObject({ exitCode: 7, stdout: '你好', stderr: 'diagnostic', executionId: 'exec_fixture' })
   })
   it('engine rejects terminal failures', async () => {
     const engine = new RunsealEngine(config('failed'), undefined)
-    await expect(engine.execute(['unused'], process.cwd(), 'read-only')).rejects.toMatchObject({ code: 'EXECUTION_TIMEOUT' })
+    await expect(engine.execute([process.execPath], process.cwd(), 'read-only')).rejects.toMatchObject({ code: 'EXECUTION_TIMEOUT' })
   })
   it('cancels using the same RPC connection that owns the execution', async () => {
     const client = new RunsealRpcClient(config('cancel'), () => {})
@@ -87,7 +95,7 @@ describe('dsh service integration', () => {
     const runtime = ctx.subprocess
     const provider = new RunsealSandboxProvider(ctx, () => ({ ...config('echo'), timeoutMs: 1000, autoSetup: false }))
     try {
-      const confined = await provider.confine(['unused'], { mode: 'read-only', workspaceRoot: process.cwd() })
+      const confined = await provider.confine([process.execPath], { mode: 'read-only', workspaceRoot: process.cwd() })
       const handle = runtime.spawn({ argv: confined.argv, cwd: process.cwd(), graceMs: 1000,
         stdio: { stdin: { data: 'dsh-input' }, stdout: { maxBytes: 1024 }, stderr: { maxBytes: 1024 } } })
       expect(await handle.done).toMatchObject({ exitCode: 0 })

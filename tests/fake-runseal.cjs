@@ -6,6 +6,7 @@ const executionId = 'exec_fixture'
 let input = []
 let sequence = 0
 let timer
+let pressureAttempts = 0
 const send = message => process.stdout.write(JSON.stringify(message) + '\n')
 const event = (type, extra = {}) => send({ jsonrpc: '2.0', method: 'event', params: { type, execution_id: executionId, ...extra } })
 function terminal(code = 0, extra = {}) {
@@ -32,12 +33,17 @@ reader.on('line', line => {
       process.stdout.write(receipt.slice(17))
       if (scenario === 'pty-preparing') return
       event('execution.started', { process_id: scenario === 'pty-no-pid' ? undefined : 12345 })
+      if (scenario === 'argv') {
+        event('execution.stdout', { data: `base64:${Buffer.from(JSON.stringify(request.params)).toString('base64')}` })
+        terminal()
+        return
+      }
       if (scenario === 'owner-env') {
         event('execution.stdout', { data: 'base64:' + Buffer.from(JSON.stringify({ home: process.env.RUNSEAL_WINDOWS_SANDBOX_HOME, local: process.env.LOCALAPPDATA })).toString('base64') })
         terminal()
         return
       }
-      if (scenario.startsWith('pty') || scenario === 'control') return
+      if (scenario.startsWith('pty') || scenario === 'control' || scenario.startsWith('pressure')) return
       if (['cancel', 'cancel-delayed', 'echo', 'cancel-early'].includes(scenario)) {
         if (scenario !== 'echo') event('execution.stdout', { data: 'base64:UkVBRFk=' })
         return
@@ -52,8 +58,13 @@ reader.on('line', line => {
       }, 180)
     }, scenario === 'cancel-early' ? 150 : 10)
   } else if (request.method === 'writeExecutionInput') {
+    if (scenario.startsWith('pressure') && (++pressureAttempts <= 2 || scenario === 'pressure-cancel')) {
+      event('execution.stdout', { data: 'base64:' + Buffer.from('PRESSURE_READY').toString('base64') })
+      send({ jsonrpc: '2.0', id: request.id, error: { message: 'queue full', data: { code: 'INPUT_BACKPRESSURE', reason: 'queue full' } } })
+      return
+    }
     input.push(Buffer.from(request.params.data.slice(7), 'base64'))
-    if (scenario === 'pty' || scenario === 'control') event(request.params.stream === 'control' ? 'execution.control' : scenario === 'pty' ? 'execution.terminal' : 'execution.stdout', { data: request.params.data })
+    if (scenario === 'pty' || scenario === 'control' || scenario.startsWith('pressure')) event(request.params.stream === 'control' ? 'execution.control' : scenario === 'pty' ? 'execution.terminal' : 'execution.stdout', { data: request.params.data })
     send({ jsonrpc: '2.0', id: request.id, result: { accepted_bytes: input.at(-1).length } })
   } else if (request.method === 'closeExecutionInput') {
     send({ jsonrpc: '2.0', id: request.id, result: {} })

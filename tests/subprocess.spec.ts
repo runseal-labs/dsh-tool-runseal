@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url'
-import { join, resolve } from 'node:path'
+import { join, resolve, dirname, basename } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
@@ -13,11 +13,67 @@ async function mount(scenario: string) {
   return ctx
 }
 function spec(extra: Partial<SubprocessSpawnSpec> = {}): SubprocessSpawnSpec {
-  return { argv: ['unused'], cwd: process.cwd(), graceMs: 1000,
+  return { argv: [process.execPath], cwd: process.cwd(), graceMs: 1000,
     stdio: { stdin: 'ignore', stdout: { maxBytes: 1024 }, stderr: { maxBytes: 1024 } }, ...extra }
 }
 
 describe('RunSeal subprocess lifecycle', () => {
+  it('reports an unavailable runner as structured sandbox failure and proves no launch', async () => {
+    const ctx = new Context()
+    await ctx.plugin(Plugin, { command: join(process.cwd(), 'missing-runseal-4627'), autoSetup: false })
+    try {
+      const confined = await ctx.sandbox.confine([process.execPath], { mode: 'read-only', workspaceRoot: process.cwd() })
+      const handle = ctx.subprocess.spawn(spec({ argv: confined.argv }))
+      await expect(handle.done).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE', cause: { code: 'ENOENT' } })
+      expect(await handle.waitForExit()).toBe(true)
+    } finally { await ctx.fiber.dispose() }
+  })
+  it('inherits the Electron Node selector only for host control workers and honors removal', async () => {
+    const previous = process.env.ELECTRON_RUN_AS_NODE
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    const ctx = await mount('argv')
+    try {
+      for (const remove of [false, true]) {
+        const handle = ctx.subprocess.spawn(spec({ env: remove ? { ELECTRON_RUN_AS_NODE: undefined } : {}, stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: 'pipe', control: 'pipe' } }))
+        await handle.done
+        const request = JSON.parse(handle.collected.stdout!.readFrom(0).text)
+        expect(request.env.ELECTRON_RUN_AS_NODE).toBe(remove ? undefined : '1')
+      }
+    } finally {
+      if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+      else process.env.ELECTRON_RUN_AS_NODE = previous
+      await ctx.fiber.dispose()
+    }
+  })
+  it('resolves bare child commands using the execution PATH and retains arguments', async () => {
+    const ctx = await mount('argv')
+    try {
+      const confined = await ctx.sandbox.confine([basename(process.execPath), 'argument with spaces'], { mode: 'read-only', workspaceRoot: process.cwd() })
+      const handle = ctx.subprocess.spawn(spec({ argv: confined.argv, env: { PATH: dirname(process.execPath) }, stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: 'pipe' } }))
+      expect((await handle.done).exitCode).toBe(0)
+      const request = JSON.parse(handle.collected.stdout!.readFrom(0).text)
+      expect(request.command).toEqual([await ctx.subprocess.resolveExecutable(process.execPath), 'argument with spaces'])
+      expect(await handle.waitForExit()).toBe(true)
+    } finally { await ctx.fiber.dispose() }
+  })
+  it('classifies backend refusal without losing rejected-admission cleanup proof', async () => {
+    const ctx = await mount('reject')
+    try {
+      const confined = await ctx.sandbox.confine([process.execPath], { mode: 'read-only', workspaceRoot: process.cwd() })
+      const handle = ctx.subprocess.spawn(spec({ argv: confined.argv }))
+      await expect(handle.done).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE', cause: { code: 'BACKEND_UNAVAILABLE' } })
+      expect(await handle.waitForExit()).toBe(true)
+    } finally { await ctx.fiber.dispose() }
+  })
+  it('retains executable-not-found instead of misreporting a missing child as sandbox failure', async () => {
+    const ctx = await mount('argv')
+    try {
+      const confined = await ctx.sandbox.confine(['runseal-nonexistent-child-4627'], { mode: 'read-only', workspaceRoot: process.cwd() })
+      const handle = ctx.subprocess.spawn(spec({ argv: confined.argv, env: { PATH: '' } }))
+      await expect(handle.done).rejects.toMatchObject({ name: 'SubprocessExecutableNotFoundError' })
+      expect(await handle.waitForExit()).toBe(true)
+    } finally { await ctx.fiber.dispose() }
+  })
   it.skipIf(process.platform !== 'win32' || !process.env.LOCALAPPDATA)('keeps host setup identity when PTC removes child profile variables', async () => {
     const ctx = await mount('owner-env')
     try {
@@ -32,7 +88,7 @@ describe('RunSeal subprocess lifecycle', () => {
   it.each(['read-only', 'workspace-write', 'danger-full-access'] as const)('unwraps %s and streams input directly over RPC', async mode => {
     const ctx = await mount('echo')
     try {
-      const confined = await ctx.sandbox.confine(['unused'], { mode, workspaceRoot: process.cwd() })
+      const confined = await ctx.sandbox.confine([process.execPath], { mode, workspaceRoot: process.cwd() })
       const handle = ctx.subprocess.spawn(spec({ argv: confined.argv, stdio: { stdin: 'pipe', stdout: { maxBytes: 1024 }, stderr: 'pipe' } }))
       handle.stdin!.end('你好-rpc')
       expect(await handle.done).toEqual({ exitCode: 0, signal: null })
@@ -120,6 +176,31 @@ describe('RunSeal subprocess lifecycle', () => {
 
 
 describe('RunSeal interactive transports', () => {
+  it('retries only rejected backpressure chunks without duplicating control bytes', async () => {
+    const ctx = await mount('pressure')
+    try {
+      const handle = ctx.subprocess.spawn(spec({ stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', control: 'pipe' } }))
+      const chunks: Buffer[] = []
+      handle.control!.on('data', chunk => chunks.push(chunk))
+      const bytes = Buffer.from('交互'.repeat(49152))
+      await new Promise<void>((resolve, reject) => handle.control!.write(bytes, error => error ? reject(error) : resolve()))
+      await expect.poll(() => Buffer.concat(chunks)).toEqual(bytes)
+      handle.terminate()
+      await handle.done
+      expect(await handle.waitForExit()).toBe(true)
+    } finally { await ctx.fiber.dispose() }
+  })
+  it('cancels a write that remains backpressured and joins cleanup', async () => {
+    const ctx = await mount('pressure-cancel')
+    try {
+      const handle = ctx.subprocess.spawn(spec({ stdio: { stdin: 'ignore', stdout: { maxBytes: 1024 }, stderr: 'pipe', control: 'pipe' } }))
+      handle.control!.write('pending', () => {})
+      await expect.poll(() => handle.collected.stdout!.readFrom(0).text).toContain('PRESSURE_READY')
+      handle.terminate()
+      await handle.done
+      expect(await handle.waitForExit()).toBe(true)
+    } finally { await ctx.fiber.dispose() }
+  })
   it('keeps control bytes separate and allows independent half-close', async () => {
     const ctx = await mount('control')
     try {
@@ -139,7 +220,7 @@ describe('RunSeal interactive transports', () => {
   it('cancels pending terminal allocation and waits for protocol cleanup', async () => {
     const ctx = await mount('pty-preparing')
     try {
-      await expect(ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+      await expect(ctx.subprocess.spawnTerminal({ argv: [process.execPath], cwd: process.cwd(), rows: 24, cols: 80,
         terminalType: 'xterm', graceMs: 1000, signal: AbortSignal.timeout(100) })).rejects.toThrow()
       await ctx.fiber.dispose()
     } finally { await ctx.fiber.dispose() }
@@ -148,7 +229,7 @@ describe('RunSeal interactive transports', () => {
   it('rejects terminal allocation without a native PID', async () => {
     const ctx = await mount('pty-no-pid')
     try {
-      await expect(ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+      await expect(ctx.subprocess.spawnTerminal({ argv: [process.execPath], cwd: process.cwd(), rows: 24, cols: 80,
         terminalType: 'xterm', graceMs: 1000 })).rejects.toThrow('native process identity')
     } finally { await ctx.fiber.dispose() }
   })
@@ -156,7 +237,7 @@ describe('RunSeal interactive transports', () => {
   it('rejects an accepted interrupt when execution ends without delivery', async () => {
     const ctx = await mount('pty-unconfirmed')
     try {
-      const terminal = await ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+      const terminal = await ctx.subprocess.spawnTerminal({ argv: [process.execPath], cwd: process.cwd(), rows: 24, cols: 80,
         terminalType: 'xterm', graceMs: 1000 })
       await expect(terminal.signalForeground('SIGINT')).rejects.toThrow('before signal delivery')
       await terminal.terminate()
@@ -166,7 +247,7 @@ describe('RunSeal interactive transports', () => {
   it('retains delivery proof when the terminal exits in the same RPC batch', async () => {
     const ctx = await mount('pty-exit-after-delivery')
     try {
-      const terminal = await ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
+      const terminal = await ctx.subprocess.spawnTerminal({ argv: [process.execPath], cwd: process.cwd(), rows: 24, cols: 80,
         terminalType: 'xterm', graceMs: 1000 })
       expect(await terminal.signalForeground('SIGINT')).toBe(process.platform === 'win32' ? 12345 : 23456)
       await terminal.terminate()
@@ -177,7 +258,7 @@ describe('RunSeal interactive transports', () => {
     const ctx = await mount('pty')
     const signal = new AbortController()
     try {
-      const terminal = await ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80, terminalType: 'xterm', graceMs: 1000, signal: signal.signal })
+      const terminal = await ctx.subprocess.spawnTerminal({ argv: [process.execPath], cwd: process.cwd(), rows: 24, cols: 80, terminalType: 'xterm', graceMs: 1000, signal: signal.signal })
       let output = ''
       terminal.output.on('data', chunk => { output += chunk.toString() })
       signal.abort() // Allocation cancellation no longer owns the published terminal.

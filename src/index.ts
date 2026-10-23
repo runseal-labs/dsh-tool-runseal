@@ -1,7 +1,7 @@
 /**
  * RunSeal sandbox provider for DeepSeek Harness: registers as `ctx.sandbox` and
  * confines every wrapped argv through the runseal RPC `execute` — OS-native
- * filesystem/process/resource/network policy on Windows, macOS, and Linux, with
+ * filesystem and process policy, optional network controls, with
  * audit events and environment scrubbing. `confine()` returns a thin Node
  * wrapper argv; the wrapper runs the command under runseal, forwards streamed
  * stdout/stderr, and exits with the command's exit code, so existing dsh
@@ -9,13 +9,14 @@
  *
  * Policy mapping: dsh `read-only` / `workspace-write` map to the same-named
  * RunSeal sandbox levels. dsh bypasses this seam for `danger-full-access`. RunSeal additionally offers
- * `workspace-contained` (strict) and `network.proxy` for enterprise routing.
+ * `workspace-contained` (not exposed by dsh modes) and authenticated proxy networking.
  *
  * Depends only on published dsh base packages — fully out-of-tree.
  * @module dsh-tool-runseal
  */
 
 import { wrapperPath } from './confinement.ts'
+import { sandboxUnavailable } from './errors.ts'
 import { RunsealSubprocessRuntime } from './subprocess.ts'
 export { RunsealSubprocessRuntime } from './subprocess.ts'
 import type { Context, Volatile } from '@deepseek-ai/cordis'
@@ -68,13 +69,8 @@ export const Config: z<Config, LiveConfig> = z.object({
 /** The wrapper's stable failure prefix (its `runseal: <reason>` stderr line). */
 const WRAPPER_FAILURE_PREFIX = 'runseal: '
 
-/** RunSeal RPC error codes that mean the sandbox itself refused or is unavailable. */
-const RUNSEAL_DENIAL_CODES = new Set([
-  'BACKEND_UNAVAILABLE',
-  'SETUP_REQUIRED',
-  'SANDBOX_DENIED',
-  'POLICY_DENIED',
-])
+/** Child stderr denial dialects; runner/RPC failures are classified separately. */
+const DENIAL_SIGNATURES = ['Read-only file system', 'Permission denied', 'Operation not permitted', 'Access is denied', 'Access to the path', 'UnauthorizedAccessException', '拒绝访问', '不允许的操作', '权限不够']
 
 /**
  * Register the RunSeal sandbox provider as `ctx.sandbox`.
@@ -112,7 +108,14 @@ export class RunsealSandboxProvider extends SandboxProvider {
     if (policyId === undefined) {
       throw new SandboxUnavailableError(policy.mode, `unknown mode ${policy.mode}`)
     }
-    return this.wrap(argv, policy, policyId, 'full')
+    try {
+      // full concerns the requested file effects, not backend maturity or network.
+      // RunSeal rejects unavailable enforcement at admission; it never falls back.
+      return this.wrap(argv, policy, policyId, 'full')
+    } catch (error) {
+      signal?.throwIfAborted()
+      throw sandboxUnavailable(policy.mode, error)
+    }
   }
 
   private wrap(argv: readonly string[], policy: SandboxPolicy, policyId: string, enforcement: SandboxEnforcement): ConfinedArgv {
@@ -131,7 +134,7 @@ export class RunsealSandboxProvider extends SandboxProvider {
     return {
       argv: [process.execPath, wrapperPath, JSON.stringify(spec)],
       enforcement,
-      denialSignatures: [...RUNSEAL_DENIAL_CODES],
+      denialSignatures: [...DENIAL_SIGNATURES],
       runnerFailureRules: RUNNER_FAILURE_RULES,
     }
   }

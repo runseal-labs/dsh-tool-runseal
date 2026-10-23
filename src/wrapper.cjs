@@ -151,7 +151,8 @@ function start() {
     if (rpc === child && !done && !retrying) fail({ code: 'RPC_CLOSED', reason: 'connection closed before execution completed' })
   })
   // Resolve policy against the workspace, but preserve the caller's actual cwd.
-  void send('explainPolicy', { policy: spec.policy, cwd: spec.cwd, network: spec.network }).then(explained => {
+  void send('explainPolicy', { policy: spec.policy, cwd: spec.cwd, network: spec.network }).then(async explained => {
+    const program = await require('./executable.cjs').resolveExecutable(spec.argv[0], process.env, process.cwd())
     if (done || rpc !== child) return
     const policy = { id: explained.policy_id, sandbox_level: explained.sandbox_level }
     for (const key of ['filesystem', 'network', 'environment', 'process', 'resources', 'approval']) {
@@ -162,7 +163,7 @@ function start() {
     if (policy.filesystem) delete policy.filesystem.unrestricted
     // RunSeal rejects inline read-only policies with empty write roots; use its named profile.
     rpc.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'execute', params: {
-      command: spec.argv, cwd: process.cwd(), policy: spec.policy === 'workspace-write' ? policy : spec.policy, network: spec.network,
+      command: [program, ...spec.argv.slice(1)], cwd: process.cwd(), policy: spec.policy === 'workspace-write' ? policy : spec.policy, network: spec.network,
       timeout_ms: spec.timeoutMs, stdin: { mode: 'stream' },
     } }) + '\n')
   }).catch(fail)

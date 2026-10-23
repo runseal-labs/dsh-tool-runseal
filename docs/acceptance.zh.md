@@ -199,3 +199,39 @@ PTY 重试实例继续用于宿主退出测试。PTC 代码成功返回后，dsh
 全程未调用 repair、删除保护记录或额外提权，未修改 dsh、插件或 RunSeal 源码。验收主机已完成 Windows setup，本轮不覆盖首次 UAC setup、强杀 owner、机器断电或其他平台。浏览器自动化 Ctrl-C 未产生 ETX，不计为本轮通过项；本轮取消通过页面停止生成和关闭终端验证。
 
 本机证据保留在 `~/.dsh/runseal-preview/windows-web-024/`：`acceptance-result.json`、`host-loss-result.json`、`post-restart-result.json`，以及 `pty-ptc-interaction.png`、`pty-retry.png`、`host-loss-ready.png`、`post-restart.png`。原始审计位于验收工作区 `.runseal/audit/`；截图和本机输出未纳入仓库。
+
+## 原生 shell 适配补验——未发布源码（2026-10-23）
+
+本轮验证的是插件工作区构建，版本字段仍为 0.2.4，二进制仍为已发布 RunSeal 0.2.2；修复尚未包含在 npm 0.2.4 中。只修改插件，不改 dsh。Windows 使用本地原版 dsh master 的 CLI；mba 使用已安装的 dsh 0.2.1-rc.2 启动器。独立 `runseal-shell-adapter` profile 加载插件构建产物和 `tests/native-shell-driver.mjs`，不替换日常 Web/desktop profile。
+
+两端分别通过原生 `ctx.shell.resolve()` / `execute()` / `result()` 路径验证 Windows PowerShell 与 macOS bash，不用 PTY 或 PTC 冒充 shell 工具覆盖。macOS 原生执行器传入裸 `bash`，由插件在执行时按有效 PATH 解析；参数不经过额外 shell 展开。
+
+| 场景 | Windows / mba 结果 |
+|---|---|
+| 工作区内修改执行 | 输出 `NATIVE_SHELL_OK`，退出码 0，denied=false。 |
+| 普通命令失败 | 退出码 17，denied=false，不误报为沙箱拒绝。 |
+| 只读写入拒绝 | 写入未发生，命令非零退出，原生 shell 结果中 denied=true。 |
+| 取消及重试 | 等待 shell 输出 CANCEL_READY 后取消、等待结束；再次执行输出 NATIVE_SHELL_RETRY_OK，退出码 0。 |
+
+两端各 5 份执行审计均确认 sandbox.enforced=true、cleanup_complete=true，临时执行目录已消失。Windows 取消／重试审计为 `sess_1a1679717bd_8150_0.jsonl` / `sess_1a167971eb1_8034_0.jsonl`；mba 为 `sess_1a16796f294_b6b3_0.jsonl` / `sess_1a16796f32f_b6b6_0.jsonl`。Windows 证据保留在 `~/.dsh/runseal-preview/shell-adapter/`；mba 为 `~/.dsh/runseal-shell-preview/`。本轮是原生服务验收，不是新的页面或公开 npm 安装验收。
+
+适配层改用子命令的 OS 拒绝文案进行诊断，runner/RPC 不可用则使用 SANDBOX_UNAVAILABLE，并通过 cause 保留原始错误；子命令找不到仍保留独立的 executable-not-found 类型。测试覆盖 PATH 覆盖、参数保留、独立 wrapper、拒绝准入后的清理证明及错误分类。enforcement 保留 full，其含义仅为成功准入后 dsh 文件效果的完整强制，不能按 macOS experimental 支持标签直接降为 partial；也不表示网络或读隔离。
+
+另行排查 Windows 桌面 PTC 启动失败：受限身份对用户目录安装的 Electron 可执行文件存在显式拒绝读取 ACL；完全权限路径则曾因插件漏传 ELECTRON_RUN_AS_NODE=1 而启动 GUI。修复启动变量传递后，实际桌面可执行文件在完全权限下输出 ELECTRON_NODE_MODE_OK 并以 0 退出。受限 Electron 启动仍被 ACL 阻止，未放宽权限、删除缓存或声称该桌面场景已修复；应另行配置可访问的独立 Node 及 bootstrap。上述 PowerShell/bash 验收不受此桌面部署限制影响。
+
+## Windows 桌面受限 PTC 独立 Node 部署——未发布源码（2026-10-23）
+
+上述桌面限制现已通过显式部署解决，不放宽 ACL、不改 dsh。原版桌面发行版 0.2.1-rc.2 继续作为 Electron 宿主；PTC launch 指向可访问的独立 Node 26.8.1，以及从该安装包 ASAR 原样复制的 per-call bootstrap。原文件 42,917 字节，SHA-256 为 `e25ce53b26bb3e96e62cb7433f74612395f3865b4627a695d3d4fd42c4706790`，副本逐字节哈希一致。persistent bootstrap 同时备份，但本轮执行模式为 per-call。
+
+新增 `scripts/prepare-desktop-ptc.mjs` 生成有哈希的副本、manifest 和独立配置片段，不改安装包、profile 或权限。实际 desktop profile 已安装本地修复 tarball（版本字段仍为 0.2.4、固定自动下载 RunSeal 0.2.2），通过已有 `ptc-runtime.launch` 配置使用独立 Node 和 bootstrap，并重新启动桌面应用。profile 原文件已备份；只为这个精确本地 tarball 允许 postinstall，未关闭一般安装脚本策略。npm 0.2.4 尚不包含这些源码修改。
+
+使用已安装的插件与自动下载二进制、原版桌面 Electron CLI 宿主及原版 PTC runtime，在独立验收 profile 验证：
+
+- 受限 PTC 通过真实主机 binding 往返 `{answer:42}`，并精确往返 294,912 字节 UTF-8 中文字符串；worker 确认为独立 node.exe，非 Electron。
+- 通过 binding 确认 worker 就绪，再取消并等待结束；返回 abort，下一次运行成功返回 43。
+- 同时保留运行中的 worker 和 Node 后代进程，只强杀验收宿主。审计 `sess_1a167a17d34_738c_0.jsonl` 记录 client_disconnected、sandbox.enforced=true、cleanup_complete=true；RPC owner、worker、后代进程全部退出，执行目录消失。
+- 重启后大消息交互、取消、重试再次通过。三份审计 `sess_1a167a1f3b6_a198_0.jsonl`、`sess_1a167a1fa09_9f00_0.jsonl`、`sess_1a167a1ff20_1dbc_0.jsonl` 均确认受限执行、完整清理和无执行目录残留。
+
+大消息曾暴露 INPUT_BACKPRESSURE：RunSeal 有 256 KiB 待写队列，拒绝表示本次块未入队。插件现只重试这一明确拒绝的块，RPC 轮次之间让出 I/O，不增加 sleep、超时或重复已接受的块；持续背压时仍可取消。新增定向测试覆盖精确字节、不重复和背压中的取消清理。准备工具已用真实安装包运行，58 项插件测试通过、4 项需显式启用的测试跳过；桌面原生验收单独执行。
+
+原桌面 EXE 的拒绝读取 ACL 前后 SDDL 一致，未 repair、提权、删除保护记录或放宽断言。此为 Windows 原生桌面服务验收，不是页面操作验收，也不声称覆盖 persistent 模式、机器断电或强杀 RPC owner。证据保留于 `~/.dsh/runseal-preview/desktop-ptc/`，运行时副本与生成配置在 `~/.dsh/runseal-runtime/ptc/`；验收驱动为 `tests/desktop-ptc-driver.mjs`。

@@ -1,7 +1,7 @@
 /** RPC-owned subprocesses: never place the RunSeal owner inside dsh's kill range. */
-import { constants } from 'node:fs'
-import { access, stat, realpath } from 'node:fs/promises'
-import { delimiter, extname, isAbsolute, resolve, join } from 'node:path'
+import { isAbsolute, resolve, join } from 'node:path'
+import { resolveExecutable as resolveProgram } from './executable.cjs'
+import { sandboxUnavailable } from './errors.ts'
 import { Duplex, PassThrough, Writable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { SubprocessRuntime, SubprocessExecutableNotFoundError, scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -84,23 +84,17 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
   async resolveExecutable(command: string, env?: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted()
     if (!command || command.includes('\0') || (!isAbsolute(command) && /[/\\]/.test(command))) throw new Error('runseal: use an absolute executable or a PATH name')
-    const values = environment(env)
-    const get = (key: string) => Object.entries(values).find(([name]) => process.platform === 'win32' ? name.toLowerCase() === key.toLowerCase() : name === key)?.[1]
-    const extensions = process.platform === 'win32' && !extname(command) ? (get('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';') : ['']
-    const candidates = isAbsolute(command) ? [command] : (get('PATH') ?? '').split(delimiter).flatMap(dir => extensions.map(extension => resolve(dir, command + extension)))
-    for (const candidate of candidates) {
-      signal?.throwIfAborted()
-      try {
-        if (!(await stat(candidate)).isFile()) continue
-        await access(candidate, constants.X_OK)
-        const path = await realpath(candidate)
-        signal?.throwIfAborted()
-        return path
-      } catch { signal?.throwIfAborted() }
-    }
-    throw new SubprocessExecutableNotFoundError(`runseal: executable not found: ${command}`)
+    return this.resolveChildExecutable(command, environment(env), process.cwd(), signal)
   }
 
+  private async resolveChildExecutable(command: string, env: NodeJS.ProcessEnv, cwd: string, signal?: AbortSignal): Promise<string> {
+    try { return await resolveProgram(command, env, cwd, signal) }
+    catch (error) {
+      signal?.throwIfAborted()
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new SubprocessExecutableNotFoundError(String(error))
+      throw error
+    }
+  }
   async terminalEnvironment(signal?: AbortSignal): Promise<SubprocessTerminalEnvironment> {
     signal?.throwIfAborted()
     const shell = process.platform === 'win32' ? process.env.ComSpec : process.env.SHELL
@@ -159,10 +153,15 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
   }
 
   private spawnExecution(spec: SubprocessSpawnSpec, pty?: SubprocessTerminalSpawnSpec) {
-    const config = typeof this.config === 'function' ? this.config() : this.config
     if (this.disposed) throw new Error('runseal: subprocess provider disposed')
     validate(spec)
     const confinement = confinedSpec(spec.argv)
+    let config: ResolvedEngineConfig
+    try { config = typeof this.config === 'function' ? this.config() : this.config }
+    catch (error) {
+      if (confinement && confinement.policy !== 'danger-full-access') throw sandboxUnavailable(confinement.policy, error)
+      throw error
+    }
     const stdout = output(spec.stdio.stdout, 'stdout')
     const stderr = output(spec.stdio.stderr, 'stderr')
     const done = deferred<SubprocessOutcome>()
@@ -183,7 +182,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     let submitted = false
     let settled = false
     let ioFailure: unknown
-    const childEnv = { ...spec.env, ...spec.stdio.control ? { [SUBPROCESS_CONTROL_ENV]: 'pipe' } : {} }
+    const childEnv: NodeJS.ProcessEnv = { ...spec.env, ...spec.stdio.control ? { [SUBPROCESS_CONTROL_ENV]: 'pipe' } : {} }
     const env = environment(childEnv)
     // The RPC owner uses host setup state even when a consumer clears LOCALAPPDATA.
     // Keep the child's requested environment removal; do not restore its user profile.
@@ -192,7 +191,8 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
         ?? (process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'RunSeal', 'windows-sandbox') : undefined)
       if (home) env.RUNSEAL_WINDOWS_SANDBOX_HOME = resolve(home)
     }
-    const client = new RunsealRpcClient({ command: config.command, args: config.args, env, replaceEnv: true }, event => {
+    const transport = { command: config.command, args: config.args, env, replaceEnv: true }
+    const client = new RunsealRpcClient(transport, event => {
       if (event.execution_id !== executionId) return
       if (event.type === 'execution.started') {
         if (!Number.isSafeInteger(event.process_id) || (event.process_id as number) <= 0) {
@@ -236,7 +236,19 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       const pending = inputQueues[stream].then(async () => {
         if (terminal || cancelled) throw new Error('runseal: execution is closing')
         for (let offset = 0; offset < chunk.length; offset += 8192) {
-          await request('writeExecutionInput', { stream, encoding: 'base64', data: `base64:${chunk.subarray(offset, offset + 8192).toString('base64')}` })
+          const bytes = chunk.subarray(offset, offset + 8192)
+          for (;;) {
+            try {
+              const receipt = await request('writeExecutionInput', { stream, encoding: 'base64', data: `base64:${bytes.toString('base64')}` }) as Record<string, unknown>
+              if (receipt.accepted_bytes !== bytes.length) throw new Error('runseal: input receipt did not accept the complete chunk')
+              break
+            } catch (error) {
+              // RFC-0021: backpressure means zero bytes were accepted. Retain
+              // this chunk and yield to I/O; never replay an accepted chunk.
+              if (!(error instanceof RpcError) || error.code !== 'INPUT_BACKPRESSURE') throw error
+              await new Promise<void>(resolve => setImmediate(resolve))
+            }
+          }
         }
       })
       inputQueues[stream] = pending
@@ -257,6 +269,12 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     control?.on('error', error => { if (!terminal && !cancelled) { ioFailure = error; terminate() } })
     input.on('error', error => { if (!terminal && !cancelled) { ioFailure = error; terminate() } })
     async function finish(result?: Record<string, unknown>, error?: unknown) {
+      const originalError = error
+      if (error && confinement && confinement.policy !== 'danger-full-access'
+          && !spec.signal?.aborted && !(error instanceof SubprocessExecutableNotFoundError)
+          && (!(error instanceof RpcError) || ['BACKEND_UNAVAILABLE', 'POLICY_DENIED', 'INVALID_REQUEST', 'UNSUPPORTED_FEATURE', 'EXECUTION_FAILED_TO_START'].includes(error.code))) {
+        error = sandboxUnavailable(confinement.policy, error)
+      }
       terminal = true
       spec.signal?.removeEventListener('abort', terminate)
       admitted.reject(error ?? new Error('runseal: execution ended'))
@@ -267,7 +285,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       stdout.end(); stderr.end()
       // Rejected admission proves no new execution started; transport loss does not.
       const clean = result ? result.cleanup_complete === true
-        : error instanceof RpcError && error.code !== 'EXECUTION_CLEANUP_FAILED' && error.data.cleanup_complete !== false
+        : originalError instanceof RpcError && originalError.code !== 'EXECUTION_CLEANUP_FAILED' && originalError.data.cleanup_complete !== false
       const noLaunch = !submitted
       await client.close()
       settled = true
@@ -278,7 +296,9 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       else if (ioFailure) done.reject(ioFailure)
       else if (result?.error && !(cancelled && (result.error as RpcErrorData).code === 'EXECUTION_CANCELLED')) {
         const data = result.error as RpcErrorData
-        done.reject(new RpcError(data.reason ?? data.code, data))
+        const failure = new RpcError(data.reason ?? data.code, data)
+        done.reject(confinement && confinement.policy !== 'danger-full-access' && ['BACKEND_UNAVAILABLE', 'POLICY_DENIED', 'EXECUTION_FAILED_TO_START'].includes(data.code)
+          ? sandboxUnavailable(confinement.policy, failure) : failure)
       } else done.resolve({ exitCode: typeof result?.exit_code === 'number' ? result.exit_code : null,
         signal: cancelled ? 'SIGTERM' : typeof result?.signal === 'string' ? result.signal as NodeJS.Signals : null })
     }
@@ -300,6 +320,8 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     void quiescent.promise.then(() => this.live.delete(handle), () => {})
     void (async () => {
       try {
+        // Prove runner availability before treating execute as submitted.
+        transport.command = await resolveProgram(config.command, env, process.cwd(), spec.signal)
         let policy: unknown = confinement?.policy ?? 'danger-full-access'
         const network = confinement?.network ?? config.networkMode
         if (confinement?.policy === 'workspace-write') {
@@ -309,8 +331,18 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
           policy = { id: explained.policy_id, sandbox_level: explained.sandbox_level, filesystem }
         }
         if (cancelled) { await finish(); return }
+        const argv = confinement?.argv ?? spec.argv
+        const program = await this.resolveChildExecutable(argv[0]!, env, spec.cwd, spec.signal)
+        // PTC intentionally inherits this startup selector; RunSeal's minimal
+        // child environment must not turn an Electron Node worker into a GUI.
+        if (spec.stdio.control && process.env.ELECTRON_RUN_AS_NODE === '1'
+            && !Object.keys(childEnv).some(key => key.toUpperCase() === 'ELECTRON_RUN_AS_NODE')) {
+          const host = await resolveProgram(process.execPath, env, spec.cwd, spec.signal)
+          if (process.platform === 'win32' ? program.toLowerCase() === host.toLowerCase() : program === host) childEnv.ELECTRON_RUN_AS_NODE = '1'
+        }
+        if (cancelled) { await finish(); return }
         submitted = true
-        const result = await client.execute({ command: confinement?.argv ?? [...spec.argv], cwd: spec.cwd, policy, network,
+        const result = await client.execute({ command: [program, ...argv.slice(1)], cwd: spec.cwd, policy, network,
           stdin: { mode: 'stream' },
           ...pty ? { io: { mode: 'pty', rows: pty.rows, cols: pty.cols } } : spec.stdio.control ? { io: { mode: 'pipe', control: { mode: 'pipe', child_fd: SUBPROCESS_CONTROL_FD } } } : {},
           ...confinement ? { timeout_ms: confinement.timeoutMs } : {},

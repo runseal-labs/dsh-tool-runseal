@@ -68,6 +68,16 @@ describe('RunsealRpcClient', () => {
 })
 
 describe('RunsealSandboxProvider confine', () => {
+  it('reports configuration failures as structured sandbox unavailability', async () => {
+    const ctx = new Context()
+    try {
+      const sandbox = new Plugin.RunsealSandboxProvider(ctx, () => { throw new Error('binary unavailable') })
+      await expect(sandbox.confine([process.execPath], { mode: 'read-only', workspaceRoot: process.cwd() }))
+        .rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
   function mount(): { ctx: Context; sandbox: SandboxProvider } {
     const ctx = new Context()
     return { ctx, sandbox: new Plugin.RunsealSandboxProvider(
@@ -94,7 +104,7 @@ describe('RunsealSandboxProvider confine', () => {
       autoSetup: true,
     })
     expect(confined.enforcement).toBe('full')
-    expect(confined.denialSignatures).toContain('BACKEND_UNAVAILABLE')
+    expect(confined.denialSignatures).toContain('Permission denied')
     expect(confined.runnerFailureRules[0]!.fatalSignatures).toEqual(['runseal: '])
   })
 

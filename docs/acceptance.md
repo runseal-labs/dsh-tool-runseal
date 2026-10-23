@@ -199,3 +199,39 @@ The PTY retry instance remained running for the host-loss test. After successful
 No repair, gate deletion or additional elevation was used. No dsh, plugin or RunSeal source was changed. Windows setup was already complete; this round does not cover first-time UAC setup, killing the owner itself, power loss or other platforms. Automated browser Ctrl-C did not generate ETX and is not counted as passing this round; cancellation was verified through Stop generation and terminal close.
 
 Local evidence remains under `~/.dsh/runseal-preview/windows-web-024/`: `acceptance-result.json`, `host-loss-result.json`, `post-restart-result.json`, and screenshots `pty-ptc-interaction.png`, `pty-retry.png`, `host-loss-ready.png`, `post-restart.png`. Original audits remain in the acceptance workspace's `.runseal/audit/`. Screenshots and local outputs are not checked into this repository.
+
+## Native shell adapter follow-up — unreleased source (2026-10-23)
+
+This round used the plugin workspace build, still carrying version 0.2.4, with released RunSeal 0.2.2. These fixes are not in npm 0.2.4. Only the plugin changed. Windows used the unmodified local dsh master CLI; mba used the installed dsh 0.2.1-rc.2 launcher. An isolated `runseal-shell-adapter` profile mounted the built plugin and `tests/native-shell-driver.mjs`, leaving daily Web/desktop profiles unchanged.
+
+Both platforms exercised native `ctx.shell.resolve()` / `execute()` / `result()`: Windows PowerShell and macOS bash. PTY/PTC checks were not substituted for shell-tool coverage. The macOS executor supplies bare `bash`, resolved by the plugin against the effective execution PATH without adding shell expansion to its arguments.
+
+| Scenario | Windows / mba result |
+|---|---|
+| Workspace-write execution | NATIVE_SHELL_OK, exit 0, denied=false. |
+| Ordinary command failure | Exit 17, denied=false; not misclassified as a sandbox denial. |
+| Read-only write denial | No file created, nonzero exit, denied=true in the native shell result. |
+| Cancellation and retry | Cancel after observing CANCEL_READY, join settlement, then NATIVE_SHELL_RETRY_OK with exit 0. |
+
+Five execution audits on each platform confirmed sandbox.enforced=true and cleanup_complete=true, with no remaining execution runtime directories. Windows cancel/retry: `sess_1a1679717bd_8150_0.jsonl` / `sess_1a167971eb1_8034_0.jsonl`; mba: `sess_1a16796f294_b6b3_0.jsonl` / `sess_1a16796f32f_b6b6_0.jsonl`. Evidence remains under `~/.dsh/runseal-preview/shell-adapter/` on Windows and `~/.dsh/runseal-shell-preview/` on mba. This was native service acceptance, not a new page or public npm installation check.
+
+The adapter now diagnoses child OS denial text separately from unavailable runners/RPC admission. SANDBOX_UNAVAILABLE retains the original error as cause; missing child executables retain their distinct executable-not-found type. Regression tests cover PATH overrides, argument preservation, standalone wrappers, rejected-admission cleanup proof and error classification. Enforcement stays full only for dsh's promised file effects after successful admission; macOS experimental maturity alone does not imply partial enforcement, nor does full imply network or read isolation.
+
+A separate Windows desktop PTC diagnosis found an explicit read-deny ACL on the user-profile-installed Electron executable for the restricted identity. Full-access execution instead entered GUI mode because the plugin omitted ELECTRON_RUN_AS_NODE=1. After preserving that startup selector, the actual desktop executable printed ELECTRON_NODE_MODE_OK and exited 0 in full access. Restricted Electron startup remains blocked by the ACL: permissions were not loosened, caches were not deleted, and that desktop case is not claimed fixed. It needs a separately configured accessible Node runtime and bootstrap. This desktop deployment constraint does not affect the passing PowerShell/bash checks above.
+
+## Windows desktop restricted PTC with standalone Node — unreleased source (2026-10-23)
+
+The desktop constraint above is now resolved by explicit deployment, without changing dsh or loosening ACLs. The original 0.2.1-rc.2 desktop release remains the Electron host. PTC launch uses accessible standalone Node 26.8.1 and an unchanged per-call bootstrap copied from that installation's ASAR. The 42,917-byte source and copy share SHA-256 `e25ce53b26bb3e96e62cb7433f74612395f3865b4627a695d3d4fd42c4706790`. The persistent bootstrap was also copied, but this round used per-call mode.
+
+`scripts/prepare-desktop-ptc.mjs` generates hashed copies, a manifest and a separate configuration snippet; it does not edit the installation, profile or permissions. The actual desktop profile now uses the local repaired tarball (still labelled 0.2.4, automatically downloading pinned RunSeal 0.2.2), with the existing ptc-runtime launch configuration pointing to standalone Node and bootstrap. The desktop app was restarted. Original profile files were backed up; postinstall was allowed for only that exact local tarball, preserving the general script policy. Published npm 0.2.4 does not contain these source fixes.
+
+An isolated acceptance profile used the installed plugin and downloaded binary, original desktop Electron CLI host and original PTC runtime:
+
+- Restricted PTC round-tripped `{answer:42}` through a real host binding and an exact 294,912-byte UTF-8 string. The worker identified as standalone node.exe, not Electron.
+- After a readiness binding confirmed startup, cancellation joined execution and returned abort. The next call returned 43.
+- With a worker and its Node descendant live, only the acceptance host was hard-killed. Audit `sess_1a167a17d34_738c_0.jsonl` recorded client_disconnected, sandbox.enforced=true and cleanup_complete=true. The owner, worker, descendant and execution runtime directory disappeared.
+- After restart, large-message interaction, cancellation and retry passed again. Audits `sess_1a167a1f3b6_a198_0.jsonl`, `sess_1a167a1fa09_9f00_0.jsonl` and `sess_1a167a1ff20_1dbc_0.jsonl` confirmed restricted execution, complete cleanup and removed runtime directories.
+
+The large message exposed INPUT_BACKPRESSURE from RunSeal's 256 KiB pending queue: rejection means the chunk was not enqueued. The plugin now retries only explicitly unaccepted chunks, yielding to I/O between RPC turns, without adding sleeps, extending timeouts or replaying acknowledged data. Cancellation remains available under sustained backpressure. Focused tests assert exact bytes, no duplication and cancellation cleanup. The preparation tool ran against the real installation; 58 plugin tests passed and four opt-in tests were skipped, with desktop native acceptance run separately.
+
+The original executable's read-deny ACL retained identical SDDL. No repair, elevation, gate deletion or weakened assertions were used. This is Windows native desktop service acceptance, not page interaction or evidence for persistent mode, power loss or killing the RPC owner. Evidence remains under `~/.dsh/runseal-preview/desktop-ptc/`; runtime copies and generated configuration are under `~/.dsh/runseal-runtime/ptc/`. The driver is `tests/desktop-ptc-driver.mjs`.

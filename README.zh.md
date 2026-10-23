@@ -2,13 +2,13 @@
 
 [English](README.md) | 中文
 
-一个独立的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：用 [RunSeal](https://github.com/runseal-labs/runseal) 替换内置沙箱 —— 一个 OS 原生、策略驱动的执行环境，具备可强制执行的 filesystem / process / resource / network 边界，以及结构化审计事件和环境凭据擦除。
+一个独立的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：用 [RunSeal](https://github.com/runseal-labs/runseal) 替换内置沙箱，提供文件系统策略、进程清理、结构化审计和环境凭据擦除。可选网络管控取决于所选模式及平台后端。支持执行超时和输出上限，不提供 CPU 或内存配额。
 
 完全独立于仓库（out-of-tree）：只依赖已发布的 dsh 基础包。同时注册 `ctx.sandbox` 和 `ctx.subprocess`。受限调用保留文件策略；普通 subprocess 调用以显式 `danger-full-access` 交给 RunSeal 管理。
 
 ## 适配基线
 
-适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件 **0.2.4** 固定 **RunSeal 0.2.2**。插件补丁版本独立递增，无需修改 dsh 源码。
+适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件 **0.2.5** 固定 **RunSeal 0.2.2**。插件补丁版本独立递增，无需修改 dsh 源码。
 
 ## 功能
 
@@ -17,14 +17,14 @@
 | `ctx.sandbox` provider | 继承 `SandboxProvider`；`confine()` 通过一个薄 Node wrapper 把 argv 包到 `runseal rpc` 下执行 |
 | `ctx.subprocess` provider | 管理 RPC 执行、流式输入、输出收集及溢出文件、取消和清理完成 |
 | 策略映射 | dsh 的 `read-only` / `workspace-write` → 对应的 RunSeal sandbox 级别；实际 cwd 与可写工作区根目录分别保留 |
-| 网络模式 | `unmanaged`（默认）、`disabled`、`proxy`（企业路由 + 凭据编辑） |
+| 网络模式 | `unmanaged`（默认，不隔离网络）、`disabled`、`proxy`（带认证的受管代理，不代表已实现按路由的企业放行规则） |
 | 流式输出 | `execution.stdout` / `execution.stderr` RPC 事件转发到消费者的 stdio；退出码正确传播 |
-| Fail closed | setup 缺失或后端不可用时，stderr 输出 `runseal: <原因>` 并以非零码退出，绝不静默无沙箱透传 |
-| 审计 | 每次执行产生 `execution.requested` → `policy.resolved` → `execution.finished` 事件和 JSONL 审计记录 |
+| Fail closed | setup 缺失或后端不可用时拒绝执行；受限 subprocess 故障报告 `SANDBOX_UNAVAILABLE`，独立 wrapper 输出 `runseal: <原因>` 并非零退出，不静默透传。 |
+| 审计 | 执行生命周期事件及 JSONL 记录，以 `execution.finished` 或 `execution.failed` 结束 |
 
 ## 安装
 
-通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.4` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.4 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.2**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。
+通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.5` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.5 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.2**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。
 
 支持下载 Windows、macOS、Linux 的 x64 / arm64 版本；固定版本 URL，不跟随 `latest`。提供二进制不代表各系统都支持受限策略。需要可访问 GitHub releases，并允许 npm 安装脚本；下载或校验失败会明确报错。若包管理器默认禁用脚本，需允许本包安装脚本，或启用脚本后执行 `npm rebuild dsh-tool-runseal`。运行时不自动下载，也不会静默降级为无沙箱执行。
 
@@ -42,7 +42,7 @@ runseal setup windows-sandbox --cwd <workspace> --elevate
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.4.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.5.tgz
 ```
 
 bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认使用自动下载的二进制。需要覆盖时，在 profile 的 cordis.patch.yml 中添加：
@@ -83,6 +83,10 @@ bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注�
 
 subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal 发送原始命令，不再启动 wrapper。工作区可写根与实际 cwd 分开处理；普通 argv 使用显式 `danger-full-access`，保留原有非受限 subprocess 的语义。
 
+子命令名在准入前按该次执行的有效 PATH 和 cwd 解析，参数保持原样，不做 shell 展开；独立 wrapper 复用同一解析器。shell 内置命令仍须显式通过 shell 执行。受限 runner、配置及准入故障通过 dsh 的 `SANDBOX_UNAVAILABLE` 报告；子命令缺失保留 `SubprocessExecutableNotFoundError`，取消、超时和无法证明清理完成不会被归为权限拒绝。子命令 stderr 的拒绝特征是诊断启发式，不是独立的策略违规证明。
+
+`enforcement: full` 描述已准入执行对 dsh 所承诺文件效果的完整强制，包括后端定义的临时目录写入；不代表网络隔离、读隔离、后端支持等级稳定或能阻止所有沙箱逃逸。RunSeal 必须拒绝无法强制的策略，不能降级透传；macOS 的 experimental 是另一维度的成熟度标记。该声明以成功准入为条件，`confine()` 本身不执行能力探测。
+
 每个 handle 持有自己的 RPC 连接。`execute` 先返回准入回执，输出通过事件传递，输入使用 `writeExecutionInput` / `closeExecutionInput`。`terminate()` 和 AbortSignal 通过同一连接发送 `cancelExecution`；回执前收到的取消会排队等待 execution ID，不杀 RPC owner。取消确认不代表清理完成：`done` 和 `waitForExit()` 等待终态 `cleanup_complete: true`，再等待 RPC owner 退出。连接丢失或缺少清理证明会明确拒绝，不能声称进程范围已清空。插件卸载时取消全部活跃执行并等待清理。
 
 输出收集复用 dsh 公开的有限尾部缓存与溢出文件工具。显式环境变量仍受 RunSeal 策略约束，被擦除策略禁止的键会明确报错。设为 `subprocess: false` 时，其他消费者仍启动独立 wrapper，其已有生命周期限制继续存在。
@@ -94,14 +98,21 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 - **Windows 已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。Windows RPC owner 独立于宿主控制台，宿主意外退出后通过管道断连完成清理。强杀 owner 或机器断电仍可能留下保护记录。
 - **平台验证范围** —— Windows 与 macOS arm64 已完成原生集成验收。macOS 在 mba 上验证了受限文件写入边界、取消后重试、dsh 宿主被强杀后的自动清理及重启执行，这些链路已实测可用。macOS 后端仍自报 experimental；这是后端支持等级，不影响本轮验收通过的事实。未做 Linux 实测、macOS 页面交互或 Windows UAC setup 验收。
 - **Setup** —— 挂载 subprocess provider 前完成 Windows setup；provider 不自动提权。
+- **桌面 PTC 启动** —— 控制通道上的宿主 Electron Node worker 保留宿主的 `ELECTRON_RUN_AS_NODE=1` 启动变量，调用方显式移除时不恢复。Windows setup 可能拒绝沙箱身份读取用户目录中安装的桌面可执行文件。插件不放宽这些 ACL，也不静默替换可执行文件；应通过 dsh 已有的 PTC `launch` 配置指定可访问的独立 Node 运行时和 bootstrap 资源。Web/Node 验收通过不代表桌面 Electron worker 在相同策略下也能启动。
 - **每个服务只能挂载一个 provider** —— bundle 自动禁用 `sandbox` 和 `subprocess`。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
 
 ## 验证
 
+本机 Windows 桌面部署已通过可访问的独立 Node 和原样复制的发行版 PTC bootstrap 解决上述启动限制。用已安装的桌面可执行文件，以 Electron Node 模式（`ELECTRON_RUN_AS_NODE=1`）运行 `scripts/prepare-desktop-ptc.mjs`，参数为独立 Node 的绝对路径和可选输出目录。工具验证 Node 版本，从安装包 ASAR 复制两个官方 bootstrap，校验 SHA-256，生成 manifest 和独立的 `cordis.patch.yml` 片段；不安装 Node、不改 profile、不改 ACL。将生成的 `ptc-runtime` 配置合入 desktop profile 后重启。生成配置使用 per-call；持久模式必须选择对应的 persistent bootstrap。升级 dsh 后须重新生成，保持宿主与 bootstrap 一致。
+
+0.2.5 源码已通过原版桌面宿主的受限 PTC 绑定调用、294,912 字节 UTF-8 往返、取消重试、含后代进程的宿主退出清理和重启后执行。`INPUT_BACKPRESSURE` 只重试协议保证尚未接受的块，不重发已确认块。这些修复包含在插件 0.2.5 中；此前源码验收使用本地预览包，不代表 npm 0.2.4 已包含修复。
+
 RunSeal 0.2.2 新增 macOS PTY/控制通道及持久化 owner 恢复，插件 0.2.4 固定下载该版本。macOS 15.7.8 arm64 源码验收已覆盖取消重启、宿主退出清理及 RPC owner 强杀恢复；mba 上 npm 0.2.4 全新安装也已通过受限 PTY/PTC 取消重试、宿主退出清理和重启执行，详见发布包验收记录。
 
 Windows Web 页面也已通过 npm 0.2.4 与自动下载的 RunSeal 0.2.2 验收：受限 PTY/PTC 交互、页面取消后重试、仅强杀 dsh 宿主后的清理，以及重启后执行；工作区外写入被拒绝。本轮未验证键盘 Ctrl-C 或首次 UAC setup。
+
+0.2.5 的适配层修改还通过了 Windows 原生 PowerShell 和 mba 原生 bash 补验：执行、普通失败分类、只读拒写、取消和重试。可选 Cordis 驱动为 `tests/native-shell-driver.mjs`；在独立 profile 中与 base bundle、插件构建产物一起挂载，并设置 `SHELL_TEST_ROOT` 指向验收工作区。这些源码结果不代表 npm 0.2.4 已包含修复。
 
 原生测试、Web profile 验收、审计证据和平台边界见[验收记录](https://github.com/runseal-labs/dsh-tool-runseal/blob/main/docs/acceptance.zh.md)。
 

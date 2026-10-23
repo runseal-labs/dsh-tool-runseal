@@ -9,6 +9,7 @@
 
 import { StringDecoder } from 'node:string_decoder'
 import { resolveBinary } from './binary.ts'
+import { resolveExecutable } from './executable.cjs'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import { RpcError, RunsealRpcClient } from './rpc-client.ts'
 import type { RpcErrorData } from './rpc-client.ts'
@@ -136,7 +137,7 @@ export class RunsealEngine {
     )
     try {
       const params: Record<string, unknown> = {
-        command: [...argv],
+        command: [await resolveExecutable(argv[0]!, process.env, cwd, this.signal), ...argv.slice(1)],
         cwd,
         policy,
         network: this.config.networkMode,
