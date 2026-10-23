@@ -153,4 +153,18 @@ mba（macOS 15.7.8 arm64）的全新独立 profile 使用普通 `npm install --s
 
 十条执行审计全部报告 RunSeal 0.2.2、sandbox.enforced=true、cleanup_complete=true。结束后无 cohort 注册任务、归属记录或执行运行目录残留。未执行 repair、未提权、未修改 dsh 或活跃桌面 profile。本轮属于原生 CLI/服务验收，不代表 macOS 页面交互验收。mba 结果：`~/.dsh/runseal-acceptance-024/npm-024-acceptance.json`。
 
-验收驱动曾修正 profile 字段为 dsh.profile.bundles，并在审计文件仍写入时只解析换行完整的记录；产品代码、清理断言和超时均未改动。Linux/macOS CI 通过。独立 Windows prepared-conformance 在工作区写入用例触发 30 秒执行超时，清理成功；发布工作流本身通过。本轮 macOS 验收不声称该 Windows CI 任务已通过。
+验收驱动曾修正 profile 字段为 dsh.profile.bundles，并在审计文件仍写入时只解析换行完整的记录；产品代码、清理断言和超时均未改动。发布时 Linux/macOS CI 和发布工作流通过，独立 Windows prepared-conformance 的工作区写入用例曾触发 30 秒执行超时，清理成功。该历史 CI 失败现已修复，标准矩阵已全部通过，详见下方后续验证。
+
+## Windows 超时修复及标准 CI 全绿（2026-10-23）
+
+RunSeal 提交 [`1d405d1b517d45fe2373d3b19dd9867f47655ce6`](https://github.com/runseal-labs/runseal/commit/1d405d1b517d45fe2373d3b19dd9867f47655ce6) 的[标准 CI 39903936626](https://github.com/runseal-labs/runseal/actions/runs/39903936626) 已完成，**Windows、Linux、macOS 三个平台全部通过**。
+
+Windows 超时已定位到夹具中未限定模块的 PowerShell 命令解析路径。进程能进入脚本，直接原生文件写入也完成，但未限定命令的路径在 runner 的模块环境中阻塞；对照调用同一个 `Microsoft.PowerShell.Management\Set-Content`，原写入校验在 0.95 秒内完成。修复将文件系统夹具绑定到该内置 cmdlet，并对成功的工作区写入新增 cleanup_complete=true 断言。原 30 秒执行上限、文件内容校验、退出码和拒绝越界断言均保留，测试没有新增 sleep 或重试。
+
+验证结果：
+
+- 移除诊断标记后，[独立 Windows 文件系统测试](https://github.com/runseal-labs/runseal/actions/runs/39903086957/attempts/2) 17/17 通过。
+- 标准 Windows prepared-conformance 共 **485 项通过、零失败、零 ignored**，包括原超时用例 workspace_write_allows_workspace_write_when_supported_or_fails_closed，以及全部 77 项执行一致性测试。
+- Windows 格式检查、严格 Clippy、原生清理检查、第三方示例、空白和脱敏扫描全部通过；Linux、macOS job 也均成功完成。
+
+本次后续修复修改测试夹具并加强清理断言，未修改 dsh、运行时沙箱权限或已发布二进制内容，也不替代前文的发布包验收。

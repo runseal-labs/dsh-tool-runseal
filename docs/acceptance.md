@@ -153,4 +153,18 @@ All six acceptance cases passed through the unmodified installed dsh 0.2.1-rc.2 
 
 All ten execution audits reported RunSeal 0.2.2, `sandbox.enforced: true` and `cleanup_complete: true`. No cohort jobs, ownership records or execution runtime directories remained. No repair, elevation, dsh modification or changes to the active desktop profile were needed. This is native CLI/service acceptance, not a macOS page-interaction claim. Results: `~/.dsh/runseal-acceptance-024/npm-024-acceptance.json` on mba.
 
-The acceptance driver was corrected to use `dsh.profile.bundles` and to parse only newline-complete audit records while a writer was active. Production code, cleanup assertions and deadlines were unchanged. Linux/macOS CI passed. The separate Windows prepared-conformance job timed out after 30 seconds in the workspace-write filesystem case, with complete cleanup; the release workflow itself passed. This macOS acceptance does not claim that Windows CI job passed.
+The acceptance driver was corrected to use `dsh.profile.bundles` and to parse only newline-complete audit records while a writer was active. Production code, cleanup assertions and deadlines were unchanged. At publication, Linux/macOS CI and the release workflow passed, while the separate Windows prepared-conformance job timed out after 30 seconds in the workspace-write filesystem case, with complete cleanup. That historical CI failure was subsequently resolved and the standard matrix passed in full; see the follow-up below.
+
+## Windows timeout resolution and standard CI success (2026-10-23)
+
+The [standard CI run 39903936626](https://github.com/runseal-labs/runseal/actions/runs/39903936626) completed successfully for **Windows, Linux and macOS** at RunSeal commit [`1d405d1b517d45fe2373d3b19dd9867f47655ce6`](https://github.com/runseal-labs/runseal/commit/1d405d1b517d45fe2373d3b19dd9867f47655ce6).
+
+The Windows timeout was isolated to the fixture's unqualified PowerShell command resolution. The process entered its script and a direct native file write completed, but the unqualified command path stalled in the runner's module environment. Calling the same cmdlet as `Microsoft.PowerShell.Management\Set-Content` completed the original write check in 0.95 seconds in the controlled comparison. The fix binds the filesystem fixture to that built-in cmdlet and additionally requires `cleanup_complete: true` in the successful workspace-write case. The original 30-second execution limit, file-content checks, exit-code checks and denial assertions remain; no sleep or retry was added to the tests.
+
+Verification:
+
+- The [isolated Windows filesystem suite](https://github.com/runseal-labs/runseal/actions/runs/39903086957/attempts/2) passed all 17 cases after diagnostic instrumentation was removed.
+- Standard Windows prepared conformance passed **485 tests, zero failures and zero ignored tests**, including the original `workspace_write_allows_workspace_write_when_supported_or_fails_closed` case and all 77 execution-conformance cases.
+- Windows formatting, strict Clippy, native cleanup checks, third-party examples, whitespace and redaction checks all passed. Linux and macOS jobs also completed successfully.
+
+This follow-up changes the test fixture and strengthens its cleanup assertion. It does not change dsh, runtime sandbox permissions or released binary contents, and does not replace the published-package acceptance recorded above.
