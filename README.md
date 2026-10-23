@@ -8,7 +8,7 @@ Fully out-of-tree: depends only on published dsh base packages. Registers both `
 
 ## Compatibility
 
-Adapted against unmodified dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin patch releases are versioned independently and pin an explicit RunSeal version. Plugin 0.2.2 pins RunSeal 0.2.1 and includes the restricted browser terminal and PTC setup fixes. Automatic installation requires RunSeal **0.2.1**, including the RFC-0022 transport and terminal identity changes from `ee871b0`. Earlier local acceptance used that commit while its binary still reported `0.2.0`; the actual `v0.2.0` release tag points to `8c18b10` and lacks those changes. RunSeal uses `main`, not `master`.
+Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin **0.2.3** pins **RunSeal 0.2.1**. Plugin patch releases are versioned independently; no dsh source changes are required.
 
 ## What it provides
 
@@ -24,7 +24,7 @@ Adapted against unmodified dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e
 
 ## Install
 
-Install the bundle with `dsh plugin --profile web add dsh-tool-runseal`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.2 downloads **RunSeal 0.2.1** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package. Published plugin 0.2.0 still requires a separately installed executable. RunSeal 0.2.0 predates the native terminal/control contract and is not a supported download target.
+Install the bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.3`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.3 downloads **RunSeal 0.2.1** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package.
 
 Supported downloads: Windows, macOS and Linux on x64 or arm64. Downloads use a fixed release URL, never `latest`. Binary availability does not imply that every OS supports restricted policies. Network access to GitHub releases and enabled npm lifecycle scripts are required; installation fails with a diagnostic on download/checksum errors. For package managers that block scripts, allow this package's install script or run `npm rebuild dsh-tool-runseal` with scripts enabled. No runtime download or silent unrestricted fallback occurs.
 
@@ -42,7 +42,7 @@ Install the built package into the Web profile and add dsh-tool-runseal to dsh.p
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.2.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.3.tgz
 ```
 
 The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It uses the automatically downloaded binary by default. To override it, add this to the profile cordis.patch.yml:
@@ -55,7 +55,13 @@ The bundle disables the upstream sandbox and subprocess providers and registers 
 
 Start dsh web normally and open Plugins → RunSeal to edit the executable, network mode, timeout, input limit, extra arguments and wrapper auto-setup. Saving uses dsh's native configuration service to persist the profile. New commands take a configuration snapshot; running commands keep their original settings. Remove any manual insertion or command-line overlay for the same component to avoid duplicate mounting or blocked UI writes.
 
+## Installation troubleshooting
+
+If the plugin page says “This package declares no bundle”, check the version in the **installation log**, not just the preview card. A reported macOS desktop installation previewed 0.2.3 but `pnpm add dsh-tool-runseal` actually selected `^0.1.1`, which has no bundle declaration. Enter `dsh-tool-runseal@0.2.3` as the install target. If pnpm blocks the recent release, add only `dsh-tool-runseal@0.2.3` to the existing `minimumReleaseAgeExclude` list in that profile's `pnpm-workspace.yaml`; keep the general age policy enabled. Desktop profiles usually live at `~/.dsh/profiles/desktop`, Web profiles at `~/.dsh/profiles/web`. Preserve existing settings and allow this package's postinstall script. This identifies the old-package mismatch; it does not establish why that Mac selected the old version or validate macOS sandbox execution.
+
 ## Configuration
+
+Choose read-only, workspace-write or full access in dsh’s session access mode selector. The plugin inherits that policy; there is no separate sandbox enable switch.
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -85,101 +91,15 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 
 - **Native interactive I/O** — PTY startup, input, resize and interrupt use RunSeal RPC. Control traffic uses a native byte pipe at child fd 7. Input close seals writes without peer EOF; children use message framing and close after their final response. The terminal exposes the actual child PID. Interrupt waits for native Ctrl-C input delivery and returns the Windows console root PID; shell activity remains unknown. Windows SIGTERM cancels and joins the owned console range. SIGKILL of the terminal shell is refused; SIGTSTP and SIGHUP are unsupported. Terminal termination waits for cleanup and outstanding operations.
 - **Coverage** — only commands routed through `ctx.subprocess` are managed. Direct `node:child_process` users bypass the provider.
-- **Existing abandoned gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. Hard host termination still cannot guarantee graceful cleanup.
+- **Existing abandoned gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. On Windows, the RPC owner survives ordinary host termination and cleans up on pipe disconnection. Killing the owner itself or power loss can still leave protected records.
 - **Platform verification** — native integration was exercised on Windows. macOS/Linux execution and UAC setup have not been exercised by this adaptation.
 - **Setup** — complete Windows setup before mounting the subprocess provider. It never performs automatic elevation.
 - **Single provider per service** — the bundle disables both `sandbox` and `subprocess`.
 - **No fallback chain** — unlike `sandbox-local` (bwrap→Landlock→Seatbelt→ACL), this provider does not chain to other runners; runseal must be usable or the call fails closed.
 
-## Windows UI acceptance (2026-10-23)
+## Verification
 
-Two real command flows were exercised through the dsh Web UI using unmodified dsh master (`687f282e86`), RunSeal 0.2.0 (`ee871b0`), and the plugin installed as a Web profile bundle (`3630495`):
-
-1. Select the access mode in the UI and run a PowerShell command that prints a start marker, sleeps for 120 seconds, then prints an end marker.
-2. Confirm execution has started, then cancel midway with the UI's Stop generation button.
-3. Run a short marker command in the same conversation and access mode. Neither round required restarting dsh, manually repairing execution gates, or elevating permissions.
-
-| UI mode | RunSeal policy | Cancellation result | Subsequent execution |
-|---|---|---|---|
-| Full access | `danger-full-access`, `sandbox.enforced: false` | Cancelled after about 12 seconds; `EXECUTION_CANCELLED`, `cleanup_complete: true` | Printed `RUNSEAL_UI_RETRY_20261023_OK`; exit code 0, cleanup complete |
-| Workspace write | `workspace-write`, `sandbox.enforced: true` | Cancelled after about 9 seconds; `EXECUTION_CANCELLED`, `cleanup_complete: true` | Printed `RUNSEAL_RESTRICTED_RETRY_OK`; exit code 0, cleanup complete |
-
-The full-access round verified the actual process chain `dsh → runseal.exe rpc → pwsh.exe`. The workspace-write audit confirmed a `restricted-local-process` boundary and `low-privilege` identity. In both rounds, the recorded RunSeal owner and command processes had exited after cancellation. Subsequent execution was checked against the UI's raw tool output and RunSeal completion records (the audit records output byte counts, not output text).
-
-Local audit files remain under the execution workspace's `.runseal/audit/`; they are not distributed with this repository:
-
-| Mode | Cancellation record | Subsequent execution record |
-|---|---|---|
-| Full access | `sess_1a165f70d4c_4fb0_0.jsonl` | `sess_1a165f762d6_125c_0.jsonl` |
-| Workspace write | `sess_1a165f9a3cd_ab54_0.jsonl` | `sess_1a165f9f5da_2ca8_0.jsonl` |
-
-These results cover cleanup and successful subsequent execution after normal UI cancellation on Windows. The full-access round does not validate sandbox isolation. The UI commands did not write files; these two rounds did not repeat filesystem-boundary tests or exercise forced host termination or other platforms.
-
-## npm 0.2.1 automatic installation and Web profile acceptance (2026-10-23)
-
-Both `dsh-tool-runseal@0.2.1` and RunSeal `v0.2.1` were publicly released before this acceptance. In a fresh directory, `npm install dsh-tool-runseal@latest --registry=https://registry.npmjs.org --foreground-scripts --no-audit --no-fund` resolved plugin 0.2.1. Its postinstall downloaded the Windows x64 archive from the public GitHub release, verified SHA-256, and installed all three executables. No local tarball, download fixture, custom binary path, or download override was used. The installed binary reported 0.2.1. An installed-package smoke check cancelled a workspace-write command, waited for cleanup, then printed `AUTO_BINARY_RETRY_OK` with exit code 0.
-
-The local Web profile was then installed with `dsh plugin --profile web add dsh-tool-runseal@0.2.1 --registry=https://registry.npmjs.org`. The profile allowed this package's install script and exempted this exact version from pnpm's minimum release age. The bundle was registered, `command` was cleared to an empty string, and dsh was restarted. The plugin page showed version 0.2.1, an empty executable field, and a running RunSeal component.
-
-In the existing conversation, with **Workspace write** selected:
-
-1. Run `Write-Output "AUTO_NPM_021_BEGIN"; Start-Sleep -Seconds 120; Write-Output "AUTO_NPM_021_END"` through the page.
-2. While the command was running, verify that the dsh child process used `<web-profile>/node_modules/dsh-tool-runseal/.runseal/0.2.1-win32-x64/runseal.exe rpc --stdio`.
-3. Click **Stop generation**. The page showed the stopped turn; a process check found no remaining RunSeal owner, command runner, or matching long-running command.
-4. In the same conversation and mode, run `Write-Output "AUTO_NPM_021_RETRY_OK"`. The page showed successful completion and the expected output, with exit code 0. No additional restart, gate repair, or elevation was needed between cancellation and retry.
-
-This acceptance used the public npm package and automatically downloaded release binary on an already configured Windows host. It does not establish first-time Windows setup, macOS/Linux runtime behavior, or new filesystem-isolation coverage. The Web round verified page state and process cleanup; it did not separately inspect protocol terminal audit records. Local screenshots are retained as `web-0.2.1-config.png` and `web-0.2.1-cancel-retry.png` under the acceptance output directory, outside the repository.
-
-## Browser terminal policy and PTC follow-up (local fix, 2026-10-23)
-
-Upstream user terminals call `spawnTerminal()` without confinement. The plugin now resolves the live session's sandbox policy for terminals carrying `DSH_SESSION_ID` and `shellActivity`, then confines restricted sessions before allocation. Missing session/policy services fail closed. Policy is captured when the terminal is created: close and recreate existing terminals after changing access mode. Anonymous subprocesses retain their existing behavior.
-
-PTC deliberately removes child profile environment variables. The plugin pins the RPC owner's Windows sandbox setup directory independently, without restoring removed child profile variables or credentials.
-
-The local Web profile used a patched tarball with the automatically downloaded RunSeal 0.2.1 binary; these fixes are **not in the published npm 0.2.1 package**. Against unmodified dsh, in Workspace write mode:
-
-- Page PTY: `isTTY: true`, input echo and resize passed; closing the active terminal cancelled execution with `cleanup_complete: true`, and a new terminal printed `PTY_RESTART_OK`. Cancellation audit: `sess_1a1662d9a15_8b18_0.jsonl`.
-- Native page PTC: stopped a running `run_code`, confirmed cancellation and cleanup, then ran code again and inspected raw output `PTC_CONTROL_RESTART_OK` and `{"sum":6}`. Control-channel audit records: `sess_1a16630f7c3_7f50_0.jsonl` (cancel) and `sess_1a166329a06_a0e0_0.jsonl` (retry). Both recorded enforced workspace-write. The successful code result travels over the control channel; dsh subsequently terminates the worker, so its process audit records cancellation and completed cleanup rather than exit code 0.
-
-Ctrl-C was subsequently verified with real keyboard input in the page. Browser automation's Ctrl-C shortcut did not generate terminal input; temporary plugin diagnostics recorded no ETX for those attempts. With the user pressing Ctrl-C, a raw-mode probe printed `BYTES:03` and `RAW_CTRL_C_OK`, and a normal Node process handled SIGINT, printed `PAGE_SIGINT_OK`, and exited back to the same shell. A subsequent command printed `PAGE_CTRL_C_RESTART_OK`. The plugin recorded both ETX bytes; audit `sess_1a166385259_a450_0.jsonl` confirmed enforced workspace-write and completed cleanup after closing the terminal. No Ctrl-C translation change was needed; a regression assertion preserves ETX as ordinary PTY input so raw-mode applications retain their semantics.
-
-During diagnosis, restarting dsh with a live test terminal left execution-gate reservations. After explicit authorization, the official elevated repair cleared two reservations and one runtime root; it reported zero uninspectable processes and no unverified runtime roots. The final terminal was closed normally and cleanup was confirmed before restarting dsh. Temporary diagnostics were removed. This does not establish forced-host-termination recovery without repair. No new filesystem-boundary or other-platform coverage is claimed.
-
-## npm 0.2.2 installation and Web acceptance (2026-10-23)
-
-Plugin 0.2.2 was published from `8c1bf2ef35bad01467e208003eb120424a676753`, with RunSeal pinned to 0.2.1. The public npm registry reported `latest: 0.2.2`; its tarball integrity matched the locally packed and verified artifact:
-
-```text
-sha512-wLsKIBesiTEmGlZdsWsJY/g423d1t9fbMR8Xz3Jp7vrwujN8Or4sLNNnWSyhJ9U3Kq+ylhU+yRazl8Qp929FVA==
-```
-
-In a fresh directory, `npm install dsh-tool-runseal@0.2.2 --registry=https://registry.npmjs.org --foreground-scripts --no-audit --no-fund` installed the public package and automatically downloaded RunSeal 0.2.1 and its Windows helpers. No local tarball or custom binary override was used. Running the installed package in workspace-write mode passed a 98,304-byte fd 7 control-channel round trip, cancellation with cleanup and retry, plus PTY input, resize, interrupt, cancellation and restart (`PUBLIC_NPM_022_ALL_PASS`).
-
-The Web profile was upgraded using `dsh plugin --profile web add dsh-tool-runseal@0.2.2 --registry=https://registry.npmjs.org`, replacing its local tarball dependency. This exact version was exempted from the profile's minimum release age, and the package's install script was allowed. After restarting unmodified dsh, the plugin page showed 0.2.2, an empty custom executable field and a running component. The observed process used the profile package's `.runseal/0.2.1-win32-x64/runseal.exe rpc --stdio`.
-
-With **Workspace write** selected, the page checks were:
-
-| Path | Interaction and cancellation | Subsequent execution |
-|---|---|---|
-| PTY | Printed `NPM_022_PTY_READY:true` and `PTY_ECHO:npm022`; closing the running terminal recorded `EXECUTION_CANCELLED` and completed cleanup | A new terminal printed `NPM_022_PTY_RESTART_OK:true`; normal shell exit recorded exit code 0 and completed cleanup |
-| PTC | Stopped a running native `run_code` through **Stop generation**; control traffic and completed cancellation cleanup were recorded | Raw tool output showed `NPM_022_PTC_RETRY_OK` and `42`; worker teardown completed cleanup |
-
-All four audits recorded `workspace-write` with `sandbox.enforced: true`:
-
-| Path | Cancellation audit | Retry audit |
-|---|---|---|
-| PTY | `sess_1a166439724_8d18_0.jsonl` | `sess_1a1664434c5_83b0_0.jsonl` |
-| PTC | `sess_1a166435b69_93c0_0.jsonl` | `sess_1a166439a94_947c_0.jsonl` |
-
-As in the earlier PTC check, successful code output precedes dsh's worker cancellation, so the retry's process audit reports cancellation rather than exit code 0. No restart, repair or elevation was needed between cancellation and retry. The final test terminal exited normally, and no RunSeal owner or command runner remained. Screenshots `web-npm-0.2.2-config.png`, `web-npm-0.2.2-interaction.png` and `web-npm-0.2.2-restart.png`, plus native results and audits, are retained locally outside this repository. This round used an already configured Windows host; it did not repeat manual page Ctrl-C, first-time setup, filesystem-boundary or other-platform validation.
-
-## Windows host-exit cleanup (0.2.3)
-
-The RPC owner now starts detached from the Windows host console, with its window hidden and its stdio pipes still connected. It is not unreferenced: normal disposal still waits for owner exit. If the plugin host exits or is killed, pipe closure lets RunSeal cancel its executions, finish native cleanup and release its reservations without invoking repair. Previously, a host-exit probe lost the owner before a cleanup terminal record was written.
-
-Native fault-injection tests against RunSeal 0.2.1 cover both immediate host exit without disposal and forced host termination. Both confirm enforced workspace-write, `client_disconnected`, `cleanup_complete: true`, and a subsequent restricted execution without repair. Plugin 0.2.3 includes this change and continues to pin RunSeal 0.2.1.
-
-This prevents ordinary host loss from interrupting cleanup; it does not automatically unlock existing stale records. Killing the owner as well, terminating its entire OS job, power loss, or an unprovable cleanup still requires strict native repair. The plugin never deletes gate records, treats PID absence as cleanup proof, or automatically uses `--accept-unverified-release`.
+See [acceptance records](https://github.com/runseal-labs/dsh-tool-runseal/blob/main/docs/acceptance.md) for native tests, Web profile checks, audit evidence and platform limits.
 
 ## Development
 
