@@ -8,6 +8,7 @@
  */
 
 import { StringDecoder } from 'node:string_decoder'
+import { resolveBinary } from './binary.ts'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import { RpcError, RunsealRpcClient } from './rpc-client.ts'
 import type { RpcErrorData } from './rpc-client.ts'
@@ -45,7 +46,7 @@ interface CapturedOutput {
 /** Engine configuration. */
 export interface EngineConfig {
   /** The runseal executable: absolute path or PATH-resolved name. */
-  command: string
+  command?: string
   /** Extra arguments before the `rpc` subcommand. Default `[]`. */
   args?: readonly string[]
   /** Default network mode. Default `unmanaged`. */
@@ -62,7 +63,7 @@ export type ResolvedEngineConfig = Required<Omit<EngineConfig, 'args'>> & {
 /** Resolve defaults. */
 export function resolveEngineConfig(config: EngineConfig): ResolvedEngineConfig {
   return {
-    command: config.command,
+    command: resolveBinary(config.command),
     args: config.args ?? [],
     networkMode: config.networkMode ?? 'unmanaged',
     maxStdinBytes: config.maxStdinBytes ?? 64 * 1024,

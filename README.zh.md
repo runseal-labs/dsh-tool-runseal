@@ -8,7 +8,7 @@
 
 ## 适配基线
 
-以本地上游源码为准：dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`，对应已发布包 `0.2.1-rc.2`；RunSeal `main@8c18b10034be51c15d9fd02efded8d8594a3be9a`，版本 `0.2.0`、协议 v2。RunSeal 没有 `master` 分支。本机原生测试二进制报告 `0.2.0`，包含 RFC-0022 的控制传输与终端身份改动。旧协议不属于本次验证基线。
+适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。自动安装要求 RunSeal **0.2.1**，包含 `ee871b0` 的 RFC-0022 控制传输与终端身份改动。此前本机验收使用该提交，但当时二进制仍报告 `0.2.0`；实际 `v0.2.0` release tag 指向 `8c18b10`，不含这些改动。RunSeal 使用 `main` 分支，没有 `master`。
 
 ## 功能
 
@@ -24,9 +24,11 @@
 
 ## 安装
 
-通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.0` 安装发布版 bundle，重启 dsh 后打开「插件 → RunSeal」。RunSeal 可执行文件需要包含 RFC-0022 支持（验证版本 `ee871b0`）；插件不会安装原生可执行文件。
+通过 `dsh plugin --profile web add dsh-tool-runseal` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。下一版插件在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.1**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。已发布的插件 0.2.0 仍需单独安装二进制。RunSeal 0.2.0 尚未包含完整原生终端/控制契约，不能作为下载目标。
 
-前置：PATH 上有 `runseal` 二进制（或在 `command` 配置里给绝对路径）。Windows / macOS / Linux 的预构建二进制发布在 [runseal releases](https://github.com/runseal-labs/runseal/releases) 页面。
+支持下载 Windows、macOS、Linux 的 x64 / arm64 版本；固定版本 URL，不跟随 `latest`。提供二进制不代表各系统都支持受限策略。需要可访问 GitHub releases，并允许 npm 安装脚本；下载或校验失败会明确报错。若包管理器默认禁用脚本，需允许本包安装脚本，或启用脚本后执行 `npm rebuild dsh-tool-runseal`。运行时不自动下载，也不会静默降级为无沙箱执行。
+
+`command` 留空即可使用自动下载版本。优先级为：显式 `command` → 环境变量 `RUNSEAL_BINARY` → 包内固定版本。离线或自定义安装时设置 `RUNSEAL_SKIP_DOWNLOAD=1`，然后配置 `command`；也可在安装和运行时都设置 `RUNSEAL_BINARY`。显式填入 `runseal` 仍按 PATH 解析。已有 profile 的自定义路径会保留，清空才切换到自动版本。预构建产物见 [RunSeal releases](https://github.com/runseal-labs/runseal/releases)。
 
 Windows 上受限模式（`read-only`、`workspace-write`）需要先执行一次沙箱 setup：
 
@@ -40,10 +42,10 @@ runseal setup windows-sandbox --cwd <workspace> --elevate
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.0.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.3.0.tgz
 ```
 
-bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认从 PATH 查找 runseal。需要指定绝对路径时，在 profile 的 cordis.patch.yml 中添加：
+bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认使用自动下载的二进制。需要覆盖时，在 profile 的 cordis.patch.yml 中添加：
 
 ```yaml
 - id: sandbox-runseal
@@ -57,7 +59,7 @@ bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注�
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
-| `command` | —（必填） | runseal 可执行文件：绝对路径或 PATH 上的名称。 |
+| `command` | 留空（自动） | 自定义绝对路径或 PATH 名称；留空使用 `RUNSEAL_BINARY` 或下载的固定版本。 |
 | `subprocess` | `true` | 注册由 RPC 管理的 subprocess provider。设为 false 仅提供 sandbox；此时旧 Windows 强杀问题仍然存在。 |
 | `args` | `[]` | `rpc` 子命令前的额外参数（不走 shell）。 |
 | `networkMode` | `unmanaged` | 网络策略：`unmanaged`、`disabled` 或 `proxy`。 |

@@ -94,7 +94,7 @@ describe.skipIf(!binary)('native terminal and control transports', () => {
         const bytes = Buffer.from(Array.from({ length: 98304 }, (_, i) => i % 256))
         handle.control!.end(bytes)
         handle.stdin!.end('STDIN_ONLY')
-        const outcome = await handle.done
+        const outcome = await handle.done.catch(error => { throw new Error(`control/${mode}: ${JSON.stringify({ code: error.code, reason: error.data?.reason ?? error.message })}`, { cause: error }) })
         expect(outcome.exitCode, handle.collected.stderr!.readFrom(0).text).toBe(0)
         expect(Buffer.concat(chunks)).toEqual(bytes)
         expect(handle.collected.stdout!.readFrom(0).text).toContain('STDIN_ONLY')
@@ -105,6 +105,7 @@ describe.skipIf(!binary)('native terminal and control transports', () => {
         const argv = [process.execPath, '-e', `process.on('SIGINT',()=>console.log('INTERRUPTED')); process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', b => { if(b.includes(3)) console.log('INTERRUPTED'); else console.log('INPUT:'+b.toString()) }); console.log('PID:'+process.pid+':'); console.log('TTY:'+process.stdin.isTTY+':'+process.stdout.columns+'x'+process.stdout.rows); process.stdout.on('resize',()=>console.log('SIZE:'+process.stdout.columns+'x'+process.stdout.rows));`]
         const wrapped = mode !== 'unrestricted' ? (await ctx.sandbox.confine(argv, { mode, workspaceRoot: root })).argv : argv
         const terminal = await ctx.subprocess.spawnTerminal({ argv: wrapped, cwd: root, rows: 24, cols: 80, terminalType: 'xterm-256color', graceMs: 2000 })
+          .catch(error => { throw new Error(`terminal/${mode}: ${JSON.stringify({ code: error.code, reason: error.data?.reason ?? error.message })}`, { cause: error }) })
         let output = ''
         terminal.output.on('data', chunk => { output += chunk.toString() })
         try {

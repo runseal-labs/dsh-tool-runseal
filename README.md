@@ -8,7 +8,7 @@ Fully out-of-tree: depends only on published dsh base packages. Registers both `
 
 ## Compatibility
 
-Adapted against local upstream checkouts: dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`), and RunSeal `main` at `8c18b10034be51c15d9fd02efded8d8594a3be9a` (`0.2.0`, protocol v2). RunSeal has no `master` branch. The validated native binary reports `0.2.0` and includes the RFC-0022 transport and terminal identity changes. Older protocols are not the validation baseline.
+Adapted against unmodified dsh `master` at `687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Automatic installation requires RunSeal **0.2.1**, including the RFC-0022 transport and terminal identity changes from `ee871b0`. Earlier local acceptance used that commit while its binary still reported `0.2.0`; the actual `v0.2.0` release tag points to `8c18b10` and lacks those changes. RunSeal uses `main`, not `master`.
 
 ## What it provides
 
@@ -24,9 +24,11 @@ Adapted against local upstream checkouts: dsh `master` at `687f282e8625c6b8d11ff
 
 ## Install
 
-Install the published bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.0`, then restart dsh and open Plugins → RunSeal. The RunSeal executable must include RFC-0022 support (validated at `ee871b0`); the plugin does not install the native executable.
+Install the bundle with `dsh plugin --profile web add dsh-tool-runseal`, then restart dsh and open Plugins → RunSeal. The next plugin release downloads **RunSeal 0.2.1** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package. Published plugin 0.2.0 still requires a separately installed executable. RunSeal 0.2.0 predates the native terminal/control contract and is not a supported download target.
 
-Prerequisites: a `runseal` binary on PATH (or an absolute `command` path). Prebuilt binaries for Windows / macOS / Linux are published on the [runseal releases](https://github.com/runseal-labs/runseal/releases) page.
+Supported downloads: Windows, macOS and Linux on x64 or arm64. Downloads use a fixed release URL, never `latest`. Binary availability does not imply that every OS supports restricted policies. Network access to GitHub releases and enabled npm lifecycle scripts are required; installation fails with a diagnostic on download/checksum errors. For package managers that block scripts, allow this package's install script or run `npm rebuild dsh-tool-runseal` with scripts enabled. No runtime download or silent unrestricted fallback occurs.
+
+Leave `command` empty to use the downloaded executable. A configured `command` takes precedence over `RUNSEAL_BINARY`, which takes precedence over the downloaded binary. To install offline or use a custom executable, set `RUNSEAL_SKIP_DOWNLOAD=1` during installation and configure `command`; alternatively set `RUNSEAL_BINARY` to the custom executable during installation and at runtime. An explicit PATH name such as `runseal` is preserved. Old profile overrides remain in effect until cleared. Prebuilt artifacts are published on the [RunSeal releases](https://github.com/runseal-labs/runseal/releases) page.
 
 On Windows, confined modes (`read-only`, `workspace-write`) require the sandbox setup once:
 
@@ -40,10 +42,10 @@ Install the built package into the Web profile and add dsh-tool-runseal to dsh.p
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.0.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.3.0.tgz
 ```
 
-The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It resolves runseal on PATH by default. To use an absolute executable path, add this to the profile cordis.patch.yml:
+The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It uses the automatically downloaded binary by default. To override it, add this to the profile cordis.patch.yml:
 
 ```yaml
 - id: sandbox-runseal
@@ -57,7 +59,7 @@ Start dsh web normally and open Plugins → RunSeal to edit the executable, netw
 
 | Field | Default | Meaning |
 |---|---|---|
-| `command` | — (required) | The runseal executable: absolute path or PATH-resolved name. |
+| `command` | empty (automatic) | Custom executable: absolute path or PATH name. Empty uses `RUNSEAL_BINARY` or the downloaded pinned binary. |
 | `subprocess` | `true` | Register the RPC-owned subprocess provider. Set false only for sandbox-only integrations; the old Windows kill-range limitation then remains. |
 | `args` | `[]` | Extra arguments before the `rpc` subcommand (no shell). |
 | `networkMode` | `unmanaged` | Network policy: `unmanaged`, `disabled`, or `proxy`. |

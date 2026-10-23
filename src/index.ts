@@ -56,7 +56,7 @@ export interface Config extends Omit<EngineConfig, 'args'> {
 /** Schemastery config schema validated by the Cordis loader. */
 export type LiveConfig = { [K in keyof Required<Config>]: K extends 'subprocess' ? boolean : Volatile<Required<Config>[K]> }
 export const Config: z<Config, LiveConfig> = z.object({
-  command: z.string().pattern(/\S/).required().volatile(),
+  command: z.string().default('').volatile(),
   subprocess: z.boolean().default(true),
   args: z.array(String).default([]).volatile(),
   networkMode: z.union([z.const('unmanaged'), z.const('disabled'), z.const('proxy')]).default('unmanaged').volatile(),

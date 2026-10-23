@@ -15,7 +15,7 @@ export function apply(ctx: Context): void {
     const [message, setMessage] = useState('')
     const [saving, setSaving] = useState(false)
     const fields = [
-      ['command', 'RunSeal 可执行文件', 'text'],
+      ['command', 'RunSeal 可执行文件（留空使用自动下载版本）', 'text'],
       ['networkMode', '网络模式', 'select'],
       ['timeoutMs', '执行超时（毫秒）', 'number'],
       ['maxStdinBytes', '缓冲输入上限（字节）', 'number'],
@@ -32,7 +32,6 @@ export function apply(ctx: Context): void {
             value = JSON.parse(String(value)) as unknown
             if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) throw new Error('额外参数必须是字符串数组')
           }
-          if (key === 'command' && !String(value).trim()) throw new Error('可执行文件不能为空')
           if ((key === 'timeoutMs' || key === 'maxStdinBytes') && (!Number.isSafeInteger(value) || Number(value) < 1)) throw new Error('数值必须是正整数')
           return { op: 'set' as const, path: [key], value }
         })

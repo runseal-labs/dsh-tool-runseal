@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-runseal",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "RunSeal sandbox provider plugin for DeepSeek Harness (dsh) — OS-native policy enforcement for bash and subprocess execution via runseal rpc",
   "type": "module",
   "main": "lib/index.js",
@@ -25,13 +25,16 @@
     "README.zh.md",
     "LICENSE",
     "cordis.patch.yml",
-    "locale"
+    "locale",
+    "scripts/install.mjs"
   ],
   "license": "MIT",
   "engines": {
     "node": "^22.19 || >=24"
   },
   "scripts": {
+    "postinstall": "node scripts/install.mjs",
+    "prepublishOnly": "npm run build && node scripts/check-native-release.mjs",
     "build": "tsc -p tsconfig.json && node scripts/copy-wrapper.mjs && node scripts/build-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node scripts/build-client.mjs && vitest run",
@@ -81,5 +84,9 @@
       ],
       "platform": "web"
     }
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "tar": "^7.5.22"
   }
 }
