@@ -115,6 +115,21 @@ Local audit files remain under the execution workspace's `.runseal/audit/`; they
 
 These results cover cleanup and successful subsequent execution after normal UI cancellation on Windows. The full-access round does not validate sandbox isolation. The UI commands did not write files; these two rounds did not repeat filesystem-boundary tests or exercise forced host termination or other platforms.
 
+## npm 0.2.1 automatic installation and Web profile acceptance (2026-10-23)
+
+Both `dsh-tool-runseal@0.2.1` and RunSeal `v0.2.1` were publicly released before this acceptance. In a fresh directory, `npm install dsh-tool-runseal@latest --registry=https://registry.npmjs.org --foreground-scripts --no-audit --no-fund` resolved plugin 0.2.1. Its postinstall downloaded the Windows x64 archive from the public GitHub release, verified SHA-256, and installed all three executables. No local tarball, download fixture, custom binary path, or download override was used. The installed binary reported 0.2.1. An installed-package smoke check cancelled a workspace-write command, waited for cleanup, then printed `AUTO_BINARY_RETRY_OK` with exit code 0.
+
+The local Web profile was then installed with `dsh plugin --profile web add dsh-tool-runseal@0.2.1 --registry=https://registry.npmjs.org`. The profile allowed this package's install script and exempted this exact version from pnpm's minimum release age. The bundle was registered, `command` was cleared to an empty string, and dsh was restarted. The plugin page showed version 0.2.1, an empty executable field, and a running RunSeal component.
+
+In the existing conversation, with **Workspace write** selected:
+
+1. Run `Write-Output "AUTO_NPM_021_BEGIN"; Start-Sleep -Seconds 120; Write-Output "AUTO_NPM_021_END"` through the page.
+2. While the command was running, verify that the dsh child process used `<web-profile>/node_modules/dsh-tool-runseal/.runseal/0.2.1-win32-x64/runseal.exe rpc --stdio`.
+3. Click **Stop generation**. The page showed the stopped turn; a process check found no remaining RunSeal owner, command runner, or matching long-running command.
+4. In the same conversation and mode, run `Write-Output "AUTO_NPM_021_RETRY_OK"`. The page showed successful completion and the expected output, with exit code 0. No additional restart, gate repair, or elevation was needed between cancellation and retry.
+
+This acceptance used the public npm package and automatically downloaded release binary on an already configured Windows host. It does not establish first-time Windows setup, macOS/Linux runtime behavior, or new filesystem-isolation coverage. The Web round verified page state and process cleanup; it did not separately inspect protocol terminal audit records. Local screenshots are retained as `web-0.2.1-config.png` and `web-0.2.1-cancel-retry.png` under the acceptance output directory, outside the repository.
+
 ## Development
 
 ```bash

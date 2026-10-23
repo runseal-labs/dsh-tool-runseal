@@ -115,6 +115,21 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 上述结果验证 Windows 页面正常取消后的清理及再次执行；完全权限轮不代表沙箱隔离验证。页面命令没有写入文件，未在这两轮中重复测试文件写入边界、宿主强杀或其他平台。
 
+## npm 0.2.1 自动安装与 Web profile 验收（2026-10-23）
+
+本轮验收开始前，`dsh-tool-runseal@0.2.1` 与 RunSeal `v0.2.1` 均已公开发布。在全新目录执行 `npm install dsh-tool-runseal@latest --registry=https://registry.npmjs.org --foreground-scripts --no-audit --no-fund`，解析到插件 0.2.1。postinstall 从公开 GitHub release 下载 Windows x64 压缩包，校验 SHA-256，安装三个必需的可执行文件。未使用本地 tarball、下载替身、自定义二进制路径或下载覆盖设置；安装后的二进制报告版本 0.2.1。基于实际安装包的冒烟检查在工作区内修改模式下取消命令、等待清理，再次执行输出 `AUTO_BINARY_RETRY_OK`，退出码 0。
+
+随后通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.1 --registry=https://registry.npmjs.org` 安装到本机 Web profile。profile 允许该包的安装脚本，并为这个精确版本配置 pnpm 最低发布时间豁免。bundle 正式登记，`command` 清空为字符串空值，然后重启 dsh。插件页显示版本 0.2.1、可执行文件字段为空、RunSeal 组件运行中。
+
+在原有会话中保持 **工作区内修改** 模式完成页面验收：
+
+1. 从页面执行 `Write-Output "AUTO_NPM_021_BEGIN"; Start-Sleep -Seconds 120; Write-Output "AUTO_NPM_021_END"`。
+2. 命令运行期间，核实 dsh 子进程实际使用 `<web-profile>/node_modules/dsh-tool-runseal/.runseal/0.2.1-win32-x64/runseal.exe rpc --stdio`。
+3. 点击 **停止生成**，页面显示已停止；进程检查确认 RunSeal owner、command runner 和对应长命令均已退出。
+4. 在同一会话、同一模式执行 `Write-Output "AUTO_NPM_021_RETRY_OK"`，页面显示完成并输出预期标记，退出码 0。取消和再次执行之间无需额外重启、修复门禁或提权。
+
+本轮验证了公开 npm 包及其自动下载的发布二进制，运行环境是已完成配置的 Windows 主机；不代表首次 Windows setup、macOS/Linux 运行验证或新增文件隔离边界测试。页面轮核对了页面状态与进程清理，未单独读取协议终态审计记录。截图 `web-0.2.1-config.png` 和 `web-0.2.1-cancel-retry.png` 保存在本机验收输出目录，未纳入仓库。
+
 ## 开发
 
 ```bash
