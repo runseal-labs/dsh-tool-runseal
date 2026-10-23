@@ -145,6 +145,34 @@ Ctrl-C was subsequently verified with real keyboard input in the page. Browser a
 
 During diagnosis, restarting dsh with a live test terminal left execution-gate reservations. After explicit authorization, the official elevated repair cleared two reservations and one runtime root; it reported zero uninspectable processes and no unverified runtime roots. The final terminal was closed normally and cleanup was confirmed before restarting dsh. Temporary diagnostics were removed. This does not establish forced-host-termination recovery without repair. No new filesystem-boundary or other-platform coverage is claimed.
 
+## npm 0.2.2 installation and Web acceptance (2026-10-23)
+
+Plugin 0.2.2 was published from `8c1bf2ef35bad01467e208003eb120424a676753`, with RunSeal pinned to 0.2.1. The public npm registry reported `latest: 0.2.2`; its tarball integrity matched the locally packed and verified artifact:
+
+```text
+sha512-wLsKIBesiTEmGlZdsWsJY/g423d1t9fbMR8Xz3Jp7vrwujN8Or4sLNNnWSyhJ9U3Kq+ylhU+yRazl8Qp929FVA==
+```
+
+In a fresh directory, `npm install dsh-tool-runseal@0.2.2 --registry=https://registry.npmjs.org --foreground-scripts --no-audit --no-fund` installed the public package and automatically downloaded RunSeal 0.2.1 and its Windows helpers. No local tarball or custom binary override was used. Running the installed package in workspace-write mode passed a 98,304-byte fd 7 control-channel round trip, cancellation with cleanup and retry, plus PTY input, resize, interrupt, cancellation and restart (`PUBLIC_NPM_022_ALL_PASS`).
+
+The Web profile was upgraded using `dsh plugin --profile web add dsh-tool-runseal@0.2.2 --registry=https://registry.npmjs.org`, replacing its local tarball dependency. This exact version was exempted from the profile's minimum release age, and the package's install script was allowed. After restarting unmodified dsh, the plugin page showed 0.2.2, an empty custom executable field and a running component. The observed process used the profile package's `.runseal/0.2.1-win32-x64/runseal.exe rpc --stdio`.
+
+With **Workspace write** selected, the page checks were:
+
+| Path | Interaction and cancellation | Subsequent execution |
+|---|---|---|
+| PTY | Printed `NPM_022_PTY_READY:true` and `PTY_ECHO:npm022`; closing the running terminal recorded `EXECUTION_CANCELLED` and completed cleanup | A new terminal printed `NPM_022_PTY_RESTART_OK:true`; normal shell exit recorded exit code 0 and completed cleanup |
+| PTC | Stopped a running native `run_code` through **Stop generation**; control traffic and completed cancellation cleanup were recorded | Raw tool output showed `NPM_022_PTC_RETRY_OK` and `42`; worker teardown completed cleanup |
+
+All four audits recorded `workspace-write` with `sandbox.enforced: true`:
+
+| Path | Cancellation audit | Retry audit |
+|---|---|---|
+| PTY | `sess_1a166439724_8d18_0.jsonl` | `sess_1a1664434c5_83b0_0.jsonl` |
+| PTC | `sess_1a166435b69_93c0_0.jsonl` | `sess_1a166439a94_947c_0.jsonl` |
+
+As in the earlier PTC check, successful code output precedes dsh's worker cancellation, so the retry's process audit reports cancellation rather than exit code 0. No restart, repair or elevation was needed between cancellation and retry. The final test terminal exited normally, and no RunSeal owner or command runner remained. Screenshots `web-npm-0.2.2-config.png`, `web-npm-0.2.2-interaction.png` and `web-npm-0.2.2-restart.png`, plus native results and audits, are retained locally outside this repository. This round used an already configured Windows host; it did not repeat manual page Ctrl-C, first-time setup, filesystem-boundary or other-platform validation.
+
 ## Development
 
 ```bash

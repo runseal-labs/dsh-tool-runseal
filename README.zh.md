@@ -145,6 +145,34 @@ PTC 会主动移除子进程的用户配置环境变量。插件单独固定 RPC
 
 诊断期间曾在测试终端仍运行时重启 dsh，留下执行保护记录。经明确授权，官方管理员修复清除了两条预留记录和一个临时运行目录，报告不可检查进程为 0、无未验证运行目录。最后先正常关闭终端、确认清理，再重启 dsh；临时诊断已移除。这不代表强制终止宿主后可以无需修复自动恢复。不扩展声称文件系统边界或其他平台验证通过。
 
+## npm 0.2.2 普通安装与 Web 验收（2026-10-23）
+
+插件 0.2.2 从 `8c1bf2ef35bad01467e208003eb120424a676753` 发布，固定 RunSeal 0.2.1。公开 npm registry 确认 `latest: 0.2.2`，发布包完整性哈希与本地打包验证的产物一致：
+
+```text
+sha512-wLsKIBesiTEmGlZdsWsJY/g423d1t9fbMR8Xz3Jp7vrwujN8Or4sLNNnWSyhJ9U3Kq+ylhU+yRazl8Qp929FVA==
+```
+
+在全新目录执行 `npm install dsh-tool-runseal@0.2.2 --registry=https://registry.npmjs.org --foreground-scripts --no-audit --no-fund`，安装公开包并自动下载 RunSeal 0.2.1 及 Windows 辅助程序，未使用本地 tarball 或自定义二进制覆盖。直接运行安装后的包，在 workspace-write 下通过 fd 7 控制通道 98,304 字节往返、取消清理和重试，以及 PTY 输入、调整尺寸、中断、取消和重新启动，结果为 `PUBLIC_NPM_022_ALL_PASS`。
+
+Web profile 通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.2 --registry=https://registry.npmjs.org` 升级，替换本地 tarball 依赖。profile 为这个精确版本豁免最低发布时间限制，并允许安装脚本。重启未修改的 dsh 后，插件页显示 0.2.2、自定义可执行文件字段为空、组件运行中；实际进程使用 profile 包内的 `.runseal/0.2.1-win32-x64/runseal.exe rpc --stdio`。
+
+页面保持“工作区内修改”，验证结果如下：
+
+| 路径 | 交互与取消 | 再次执行 |
+|---|---|---|
+| PTY | 输出 `NPM_022_PTY_READY:true`、`PTY_ECHO:npm022`；关闭运行中的终端，审计记录 `EXECUTION_CANCELLED` 且清理完成 | 新终端输出 `NPM_022_PTY_RESTART_OK:true`；正常退出 shell 后退出码为 0，清理完成 |
+| PTC | 通过“停止生成”取消运行中的原生 `run_code`，审计记录控制通道流量及取消清理完成 | 原始工具输出为 `NPM_022_PTC_RETRY_OK` 和 `42`，worker 结束后清理完成 |
+
+四份审计均确认 `workspace-write`、`sandbox.enforced: true`：
+
+| 路径 | 取消审计 | 重试审计 |
+|---|---|---|
+| PTY | `sess_1a166439724_8d18_0.jsonl` | `sess_1a1664434c5_83b0_0.jsonl` |
+| PTC | `sess_1a166435b69_93c0_0.jsonl` | `sess_1a166439a94_947c_0.jsonl` |
+
+与此前 PTC 验收一致，代码成功输出后 dsh 会取消 worker，因此重试的进程审计仍记录取消，而非退出码 0。取消与重试之间无需重启、修复或提权。最后正常退出测试终端，未留下 RunSeal owner 或 command runner。截图 `web-npm-0.2.2-config.png`、`web-npm-0.2.2-interaction.png`、`web-npm-0.2.2-restart.png` 及原生结果、审计保留在本机仓库外。本轮使用已完成配置的 Windows 主机，未重复页面手动 Ctrl-C、首次 setup、文件系统边界或其他平台验证。
+
 ## 开发
 
 ```bash
