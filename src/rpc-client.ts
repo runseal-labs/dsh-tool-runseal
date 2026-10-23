@@ -138,6 +138,10 @@ export class RunsealRpcClient {
     if (this.child !== undefined && this.child.exitCode === null) return this.child
     this.child = spawn(this.options.command, [...(this.options.args ?? []), 'rpc', '--stdio'], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      // On Windows, keep the cleanup owner out of the host console's lifetime.
+      // Pipes remain owned: host death delivers EOF and RunSeal joins cleanup.
+      detached: process.platform === 'win32',
+      windowsHide: true,
       ...this.options.env !== undefined
         ? { env: this.options.replaceEnv ? this.options.env : { ...process.env, ...this.options.env } }
         : {},

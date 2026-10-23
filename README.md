@@ -173,6 +173,14 @@ All four audits recorded `workspace-write` with `sandbox.enforced: true`:
 
 As in the earlier PTC check, successful code output precedes dsh's worker cancellation, so the retry's process audit reports cancellation rather than exit code 0. No restart, repair or elevation was needed between cancellation and retry. The final test terminal exited normally, and no RunSeal owner or command runner remained. Screenshots `web-npm-0.2.2-config.png`, `web-npm-0.2.2-interaction.png` and `web-npm-0.2.2-restart.png`, plus native results and audits, are retained locally outside this repository. This round used an already configured Windows host; it did not repeat manual page Ctrl-C, first-time setup, filesystem-boundary or other-platform validation.
 
+## Windows host-exit cleanup (0.2.3)
+
+The RPC owner now starts detached from the Windows host console, with its window hidden and its stdio pipes still connected. It is not unreferenced: normal disposal still waits for owner exit. If the plugin host exits or is killed, pipe closure lets RunSeal cancel its executions, finish native cleanup and release its reservations without invoking repair. Previously, a host-exit probe lost the owner before a cleanup terminal record was written.
+
+Native fault-injection tests against RunSeal 0.2.1 cover both immediate host exit without disposal and forced host termination. Both confirm enforced workspace-write, `client_disconnected`, `cleanup_complete: true`, and a subsequent restricted execution without repair. Plugin 0.2.3 includes this change and continues to pin RunSeal 0.2.1.
+
+This prevents ordinary host loss from interrupting cleanup; it does not automatically unlock existing stale records. Killing the owner as well, terminating its entire OS job, power loss, or an unprovable cleanup still requires strict native repair. The plugin never deletes gate records, treats PID absence as cleanup proof, or automatically uses `--accept-unverified-release`.
+
 ## Development
 
 ```bash

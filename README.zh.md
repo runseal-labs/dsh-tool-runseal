@@ -173,6 +173,14 @@ Web profile 通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.2 --regist
 
 与此前 PTC 验收一致，代码成功输出后 dsh 会取消 worker，因此重试的进程审计仍记录取消，而非退出码 0。取消与重试之间无需重启、修复或提权。最后正常退出测试终端，未留下 RunSeal owner 或 command runner。截图 `web-npm-0.2.2-config.png`、`web-npm-0.2.2-interaction.png`、`web-npm-0.2.2-restart.png` 及原生结果、审计保留在本机仓库外。本轮使用已完成配置的 Windows 主机，未重复页面手动 Ctrl-C、首次 setup、文件系统边界或其他平台验证。
 
+## Windows 宿主退出清理（0.2.3）
+
+RPC owner 现在脱离 Windows 宿主控制台启动，隐藏窗口，并继续连接 stdio 管道；没有调用 unref，正常释放仍会等待 owner 退出。插件宿主退出或被终止时，管道关闭会让 RunSeal 取消执行、完成原生清理并释放保护记录，无需调用 repair。此前的宿主退出探针中，owner 在写入清理终态前就已消失。
+
+针对 RunSeal 0.2.1 的原生故障注入覆盖“不执行释放直接退出宿主”和“强制终止宿主”。两者均确认 enforced workspace-write、`client_disconnected`、`cleanup_complete: true`，并在不 repair 的情况下再次执行受限命令。插件 0.2.3 包含此改动，继续固定 RunSeal 0.2.1。
+
+这项修复避免普通宿主退出打断清理，不会自动解锁已有残留记录。如果连 owner 一起强杀、终止整个 OS job、机器断电，或无法证明清理完成，仍需严格的原生 repair。插件不会删除保护记录、仅凭 PID 消失认定清理成功，也不会自动使用 `--accept-unverified-release`。
+
 ## 开发
 
 ```bash
