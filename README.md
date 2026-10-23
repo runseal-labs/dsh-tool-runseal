@@ -101,6 +101,8 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 
 RunSeal 0.2.2 adds macOS PTY/control interaction and durable owner recovery; plugin 0.2.4 pins that release. Source acceptance on macOS 15.7.8 arm64 covered cancellation and restart, host-loss cleanup and RPC-owner hard-kill recovery. Fresh npm 0.2.4 installation on mba also passed restricted PTY/PTC cancellation and restart, host-loss cleanup and execution after host restart; see the published-package acceptance record.
 
+Windows Web page acceptance also passed with npm 0.2.4 and automatically downloaded RunSeal 0.2.2: restricted PTY/PTC interaction, page cancellation and retry, cleanup after hard-killing only the dsh host, and execution after restart. An outside-workspace write was denied. This round did not validate keyboard Ctrl-C or first-time UAC setup.
+
 See [acceptance records](https://github.com/runseal-labs/dsh-tool-runseal/blob/main/docs/acceptance.md) for native tests, Web profile checks, audit evidence and platform limits.
 
 ## Development

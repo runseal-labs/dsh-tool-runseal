@@ -168,3 +168,34 @@ Windows 超时已定位到夹具中未限定模块的 PowerShell 命令解析路
 - Windows 格式检查、严格 Clippy、原生清理检查、第三方示例、空白和脱敏扫描全部通过；Linux、macOS job 也均成功完成。
 
 本次后续修复修改测试夹具并加强清理断言，未修改 dsh、运行时沙箱权限或已发布二进制内容，也不替代前文的发布包验收。
+
+## npm 0.2.4 + RunSeal 0.2.2：Windows 页面验收（2026-10-23）
+
+本机 Windows Web profile 使用公开 npm `dsh-tool-runseal@0.2.4`，自定义 `command` 为空，实际 RPC owner 来自包内 `.runseal/0.2.2-win32-x64/runseal.exe`。profile 锁文件的 npm 完整性哈希与发布包一致，未使用本地 tarball。自动下载的二进制报告 0.2.2 / 协议 v2，其 SHA-256 与官方 Windows 发布归档中提取的可执行文件一致：
+
+```text
+029E04EB0AE8FED8F524E0A0EC391D247ABF8617EDA5C46CCA098F2FC4F4E336
+```
+
+重启未修改的 dsh 后，在页面“工作区内修改”模式完成以下验收：
+
+| 场景 | 页面及审计结果 |
+|---|---|
+| PTY 交互与边界 | 真实 TTY、输入回显和 resize 事件正常；向工作区外测试路径写入返回 EPERM，目标文件不存在。 |
+| PTY 取消重试 | 关闭运行中的终端，等待取消清理；新建终端成功回显 `NPM_024_PTY_RETRY_OK`。 |
+| 原生 PTC 取消重试 | 运行中的 `run_code` 通过“停止生成”取消；下一次原始工具输出 `NPM_024_PTC_RETRY_OK` 和 `{sum:6, answer:42}`，审计包含控制通道流量。 |
+| 宿主意外退出 | PTY、PTC 同时运行时，仅强杀 Web 宿主，不强杀 RPC owner 或整个进程树；两条执行均记录 client_disconnected、cleanup_complete=true，对应 owner、子进程及执行运行目录均消失。 |
+| 重启后执行 | 原生 PTC 输出 `NPM_024_AFTER_HOST_RESTART_PTC_OK` 和 `{answer:42}`；新 PTY 回显 `NPM_024_AFTER_HOST_RESTART_PTY_OK`，仍拒绝工作区外写入。关闭测试终端后，两条执行均完成清理，进程与运行目录消失。 |
+
+关键审计记录均报告 RunSeal 0.2.2、`sandbox.enforced: true`、`workspace-write` 和 `cleanup_complete: true`：
+
+| 路径 | 页面取消 | 取消后重试／宿主断连 | 宿主重启后 |
+|---|---|---|---|
+| PTY | `sess_1a1677236e7_8ea8_0.jsonl` | `sess_1a167753f4b_b31c_0.jsonl` | `sess_1a167783a5e_a1d4_0.jsonl` |
+| PTC | `sess_1a16770fc9d_5684_0.jsonl` | 重试 `sess_1a16772086d_9048_0.jsonl`；宿主断连 `sess_1a167760242_52e8_0.jsonl` | `sess_1a1677843eb_4608_0.jsonl` |
+
+PTY 重试实例继续用于宿主退出测试。PTC 代码成功返回后，dsh 取消 worker，因此成功返回的进程审计仍可记录 cancelled；成功依据是原始工具结果、控制通道流量和完整清理，而非退出码 0。
+
+全程未调用 repair、删除保护记录或额外提权，未修改 dsh、插件或 RunSeal 源码。验收主机已完成 Windows setup，本轮不覆盖首次 UAC setup、强杀 owner、机器断电或其他平台。浏览器自动化 Ctrl-C 未产生 ETX，不计为本轮通过项；本轮取消通过页面停止生成和关闭终端验证。
+
+本机证据保留在 `~/.dsh/runseal-preview/windows-web-024/`：`acceptance-result.json`、`host-loss-result.json`、`post-restart-result.json`，以及 `pty-ptc-interaction.png`、`pty-retry.png`、`host-loss-ready.png`、`post-restart.png`。原始审计位于验收工作区 `.runseal/audit/`；截图和本机输出未纳入仓库。

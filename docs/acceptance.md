@@ -168,3 +168,34 @@ Verification:
 - Windows formatting, strict Clippy, native cleanup checks, third-party examples, whitespace and redaction checks all passed. Linux and macOS jobs also completed successfully.
 
 This follow-up changes the test fixture and strengthens its cleanup assertion. It does not change dsh, runtime sandbox permissions or released binary contents, and does not replace the published-package acceptance recorded above.
+
+## npm 0.2.4 with RunSeal 0.2.2: Windows page acceptance (2026-10-23)
+
+The local Windows Web profile used public npm `dsh-tool-runseal@0.2.4`, with an empty custom `command`. Actual RPC owners ran the package's `.runseal/0.2.2-win32-x64/runseal.exe`. The profile lockfile integrity matched the published npm package; no local tarball was used. The automatically downloaded binary reported 0.2.2 / protocol v2, and its SHA-256 matched the executable extracted from the official Windows release archive:
+
+```text
+029E04EB0AE8FED8F524E0A0EC391D247ABF8617EDA5C46CCA098F2FC4F4E336
+```
+
+After restarting unmodified dsh, the page remained in workspace-write mode for these checks:
+
+| Scenario | Page and audit result |
+|---|---|
+| PTY interaction and boundary | Real TTY, input echo and resize events worked. Writing to the outside-workspace test path failed with EPERM; no target file existed. |
+| PTY cancellation and retry | Closing the running terminal completed cancellation and cleanup. A new terminal echoed `NPM_024_PTY_RETRY_OK`. |
+| Native PTC cancellation and retry | Stop generation cancelled a running `run_code`. The next raw tool result contained `NPM_024_PTC_RETRY_OK` and `{sum:6, answer:42}`, with control-channel traffic in the audit. |
+| Unexpected host exit | With PTY and PTC both running, only the Web host was hard-killed, leaving RPC owners and their process trees to clean up. Both executions recorded client_disconnected and cleanup_complete=true; their owners, children and execution runtime directories disappeared. |
+| Execution after restart | Native PTC returned `NPM_024_AFTER_HOST_RESTART_PTC_OK` and `{answer:42}`. A new PTY echoed `NPM_024_AFTER_HOST_RESTART_PTY_OK` and still denied the outside write. After closing the test terminal, both executions had complete cleanup, no surviving processes and no runtime directories. |
+
+These key audits all reported RunSeal 0.2.2, `sandbox.enforced: true`, `workspace-write` and `cleanup_complete: true`:
+
+| Path | Page cancellation | Retry / host disconnection | After host restart |
+|---|---|---|---|
+| PTY | `sess_1a1677236e7_8ea8_0.jsonl` | `sess_1a167753f4b_b31c_0.jsonl` | `sess_1a167783a5e_a1d4_0.jsonl` |
+| PTC | `sess_1a16770fc9d_5684_0.jsonl` | Retry `sess_1a16772086d_9048_0.jsonl`; host loss `sess_1a167760242_52e8_0.jsonl` | `sess_1a1677843eb_4608_0.jsonl` |
+
+The PTY retry instance remained running for the host-loss test. After successful PTC evaluation, dsh cancels the worker, so its process audit can still record cancelled. Success is established by the raw tool result, control-channel traffic and complete cleanup, rather than exit code 0.
+
+No repair, gate deletion or additional elevation was used. No dsh, plugin or RunSeal source was changed. Windows setup was already complete; this round does not cover first-time UAC setup, killing the owner itself, power loss or other platforms. Automated browser Ctrl-C did not generate ETX and is not counted as passing this round; cancellation was verified through Stop generation and terminal close.
+
+Local evidence remains under `~/.dsh/runseal-preview/windows-web-024/`: `acceptance-result.json`, `host-loss-result.json`, `post-restart-result.json`, and screenshots `pty-ptc-interaction.png`, `pty-retry.png`, `host-loss-ready.png`, `post-restart.png`. Original audits remain in the acceptance workspace's `.runseal/audit/`. Screenshots and local outputs are not checked into this repository.
