@@ -8,7 +8,7 @@ Fully out-of-tree: depends only on published dsh base packages. Registers both `
 
 ## Compatibility
 
-Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin **0.2.3** pins **RunSeal 0.2.1**. Plugin patch releases are versioned independently; no dsh source changes are required.
+Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317` (published packages `0.2.1-rc.2`). Plugin **0.2.4** pins **RunSeal 0.2.2**. Plugin patch releases are versioned independently; no dsh source changes are required.
 
 ## What it provides
 
@@ -24,7 +24,7 @@ Adapted against unmodified dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`
 
 ## Install
 
-Install the bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.3`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.3 downloads **RunSeal 0.2.1** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package.
+Install the bundle with `dsh plugin --profile web add dsh-tool-runseal@0.2.4`, then restart dsh and open Plugins → RunSeal. Plugin 0.2.4 downloads **RunSeal 0.2.2** during npm's `postinstall`, selects the current OS and architecture, verifies the release archive's SHA-256 checksum, and installs the executable and Windows helpers together inside the package.
 
 Supported downloads: Windows, macOS and Linux on x64 or arm64. Downloads use a fixed release URL, never `latest`. Binary availability does not imply that every OS supports restricted policies. Network access to GitHub releases and enabled npm lifecycle scripts are required; installation fails with a diagnostic on download/checksum errors. For package managers that block scripts, allow this package's install script or run `npm rebuild dsh-tool-runseal` with scripts enabled. No runtime download or silent unrestricted fallback occurs.
 
@@ -42,7 +42,7 @@ Install the built package into the Web profile and add dsh-tool-runseal to dsh.p
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.3.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.4.tgz
 ```
 
 The bundle disables the upstream sandbox and subprocess providers and registers sandbox-runseal. It uses the automatically downloaded binary by default. To override it, add this to the profile cordis.patch.yml:
@@ -89,15 +89,17 @@ Collected output uses dsh's public bounded-tail/spill collector. Explicit enviro
 
 ## Known Limitations and Deferred Work
 
-- **Native interactive I/O** — PTY startup, input, resize and interrupt use RunSeal RPC. Control traffic uses a native byte pipe at child fd 7. Input close seals writes without peer EOF; children use message framing and close after their final response. The terminal exposes the actual child PID. Interrupt waits for native Ctrl-C input delivery and returns the Windows console root PID; shell activity remains unknown. Windows SIGTERM cancels and joins the owned console range. SIGKILL of the terminal shell is refused; SIGTSTP and SIGHUP are unsupported. Terminal termination waits for cleanup and outstanding operations.
+- **Native interactive I/O** — PTY startup, input, resize and interrupt use RunSeal RPC. Control traffic uses a native byte pipe at child fd 7. Input close seals writes without peer EOF; children use message framing and close after their final response. The terminal exposes the actual child PID. On Windows, interrupt waits for native Ctrl-C input delivery and returns the console root PID. On macOS it confirms native SIGINT delivery to the observed foreground process group; raw ETX remains terminal input. Foreground inspection without a current native observation and shell activity remain unknown. Windows SIGTERM cancels and joins the owned console range. SIGKILL of the terminal shell is refused; SIGTSTP and SIGHUP are unsupported. Terminal termination waits for cleanup and outstanding operations.
 - **Coverage** — only commands routed through `ctx.subprocess` are managed. Direct `node:child_process` users bypass the provider.
-- **Existing abandoned gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. On Windows, the RPC owner survives ordinary host termination and cleans up on pipe disconnection. Killing the owner itself or power loss can still leave protected records.
-- **Platform verification** — native integration has passed on Windows and macOS arm64. On mba, restricted file-write boundaries, cancellation and retry, automatic cleanup after killing the dsh host, and execution after restart were verified working. RunSeal 0.2.1 still reports its macOS backend as experimental; that support label is distinct from these passing acceptance results. Linux execution, macOS UI interaction and Windows UAC setup have not been validated.
+- **Existing abandoned Windows gates** — this change prevents the normal cancellation path from killing the owner. It does not silently reset a gate left by a previous crash or force-kill. Use `runseal repair execution-gates --json` in an elevated Windows shell; repair must prove release. On Windows, the RPC owner survives ordinary host termination and cleans up on pipe disconnection. Killing the owner itself or power loss can still leave protected records.
+- **Platform verification** — native integration has passed on Windows and macOS arm64. On mba, restricted file-write boundaries, cancellation and retry, automatic cleanup after killing the dsh host, and execution after restart were verified working. The macOS backend still reports experimental status; that support label is distinct from these passing acceptance results. Linux execution, macOS UI interaction and Windows UAC setup have not been validated.
 - **Setup** — complete Windows setup before mounting the subprocess provider. It never performs automatic elevation.
 - **Single provider per service** — the bundle disables both `sandbox` and `subprocess`.
 - **No fallback chain** — unlike `sandbox-local` (bwrap→Landlock→Seatbelt→ACL), this provider does not chain to other runners; runseal must be usable or the call fails closed.
 
 ## Verification
+
+RunSeal 0.2.2 adds macOS PTY/control interaction and durable owner recovery; plugin 0.2.4 pins that release. Source acceptance on macOS 15.7.8 arm64 covered cancellation and restart, host-loss cleanup and RPC-owner hard-kill recovery. Published-package acceptance is recorded separately in the acceptance records.
 
 See [acceptance records](https://github.com/runseal-labs/dsh-tool-runseal/blob/main/docs/acceptance.md) for native tests, Web profile checks, audit evidence and platform limits.
 

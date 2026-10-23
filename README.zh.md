@@ -8,7 +8,7 @@
 
 ## 适配基线
 
-适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件 **0.2.3** 固定 **RunSeal 0.2.1**。插件补丁版本独立递增，无需修改 dsh 源码。
+适配未修改的 dsh `master@687f282e8625c6b8d11ff58211a90524be2e4317`（已发布包 `0.2.1-rc.2`）。插件 **0.2.4** 固定 **RunSeal 0.2.2**。插件补丁版本独立递增，无需修改 dsh 源码。
 
 ## 功能
 
@@ -24,7 +24,7 @@
 
 ## 安装
 
-通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.3` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.3 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.1**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。
+通过 `dsh plugin --profile web add dsh-tool-runseal@0.2.4` 安装 bundle，重启 dsh 后打开「插件 → RunSeal」。插件 0.2.4 在 npm `postinstall` 阶段自动下载固定的 **RunSeal 0.2.2**，选择当前系统与架构，校验发布压缩包的 SHA-256，并把可执行文件和 Windows 辅助程序一起安装到包目录内。
 
 支持下载 Windows、macOS、Linux 的 x64 / arm64 版本；固定版本 URL，不跟随 `latest`。提供二进制不代表各系统都支持受限策略。需要可访问 GitHub releases，并允许 npm 安装脚本；下载或校验失败会明确报错。若包管理器默认禁用脚本，需允许本包安装脚本，或启用脚本后执行 `npm rebuild dsh-tool-runseal`。运行时不自动下载，也不会静默降级为无沙箱执行。
 
@@ -42,7 +42,7 @@ runseal setup windows-sandbox --cwd <workspace> --elevate
 pnpm build
 pnpm pack
 cd ~/.dsh/profiles/web
-pnpm add /absolute/path/dsh-tool-runseal-0.2.3.tgz
+pnpm add /absolute/path/dsh-tool-runseal-0.2.4.tgz
 ```
 
 bundle 自动禁用原版 dsh 的 sandbox、subprocess 两个 provider，并注册 sandbox-runseal。默认使用自动下载的二进制。需要覆盖时，在 profile 的 cordis.patch.yml 中添加：
@@ -89,15 +89,17 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 ## 已知限制与待办
 
-- **原生交互 I/O** —— PTY 启动、输入、resize 和 interrupt 通过 RunSeal RPC 接入。控制数据使用子进程 fd 7 上的原生字节管道；关闭输入只封闭后续写入，不发送对端 EOF，子进程通过消息边界完成通信后关闭通道。终端提供真实子进程 PID；interrupt 等待原生 Ctrl-C 写入确认，返回 Windows 控制台根进程 PID。shell 活动保持未知。Windows SIGTERM 通过协议取消并等待控制台进程范围清空；拒绝对终端 shell 执行 SIGKILL，不支持 SIGTSTP 和 SIGHUP。终端终止会等待清理及在途操作完成。
+- **原生交互 I/O** —— PTY 启动、输入、resize 和 interrupt 通过 RunSeal RPC 接入。控制数据使用子进程 fd 7 上的原生字节管道；关闭输入只封闭后续写入，不发送对端 EOF，子进程通过消息边界完成通信后关闭通道。终端提供真实子进程 PID；Windows interrupt 等待原生 Ctrl-C 写入确认并返回控制台根进程 PID；macOS 则确认 SIGINT 已投递到实际观测到的前台进程组，raw ETX 仍作为终端输入。没有实时原生观测时前台身份保持未知，shell 活动也保持未知。Windows SIGTERM 通过协议取消并等待控制台进程范围清空；拒绝对终端 shell 执行 SIGKILL，不支持 SIGTSTP 和 SIGHUP。终端终止会等待清理及在途操作完成。
 - **覆盖范围** —— 管理经过 `ctx.subprocess` 的命令；直接使用 `node:child_process` 的代码不受此 provider 管理。
-- **已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。Windows RPC owner 独立于宿主控制台，宿主意外退出后通过管道断连完成清理。强杀 owner 或机器断电仍可能留下保护记录。
-- **平台验证范围** —— Windows 与 macOS arm64 已完成原生集成验收。macOS 在 mba 上验证了受限文件写入边界、取消后重试、dsh 宿主被强杀后的自动清理及重启执行，这些链路已实测可用。RunSeal 0.2.1 的 macOS 后端仍自报 experimental；这是后端支持等级，不影响本轮验收通过的事实。未做 Linux 实测、macOS 页面交互或 Windows UAC setup 验收。
+- **Windows 已有遗留门禁** —— 正常取消路径不再杀死 RPC owner，但不会自动重置之前崩溃或强杀留下的门禁。需要在管理员终端运行 `runseal repair execution-gates --json`，由官方命令验证释放后修复。Windows RPC owner 独立于宿主控制台，宿主意外退出后通过管道断连完成清理。强杀 owner 或机器断电仍可能留下保护记录。
+- **平台验证范围** —— Windows 与 macOS arm64 已完成原生集成验收。macOS 在 mba 上验证了受限文件写入边界、取消后重试、dsh 宿主被强杀后的自动清理及重启执行，这些链路已实测可用。macOS 后端仍自报 experimental；这是后端支持等级，不影响本轮验收通过的事实。未做 Linux 实测、macOS 页面交互或 Windows UAC setup 验收。
 - **Setup** —— 挂载 subprocess provider 前完成 Windows setup；provider 不自动提权。
 - **每个服务只能挂载一个 provider** —— bundle 自动禁用 `sandbox` 和 `subprocess`。
 - **无回退链** —— 与 `sandbox-local`（bwrap→Landlock→Seatbelt→ACL）不同，本 provider 不链接其他 runner；runseal 不可用时调用直接 fail closed。
 
 ## 验证
+
+RunSeal 0.2.2 新增 macOS PTY/控制通道及持久化 owner 恢复，插件 0.2.4 固定下载该版本。macOS 15.7.8 arm64 源码验收已覆盖取消重启、宿主退出清理及 RPC owner 强杀恢复；发布包验收另记于独立验收文档。
 
 原生测试、Web profile 验收、审计证据和平台边界见[验收记录](https://github.com/runseal-labs/dsh-tool-runseal/blob/main/docs/acceptance.zh.md)。
 

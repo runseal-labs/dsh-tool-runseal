@@ -63,9 +63,9 @@ reader.on('line', line => {
     }
   } else if (request.method === 'signalExecution' || request.method === 'resizeExecution') {
     send({ jsonrpc: '2.0', id: request.id, result: { accepted: true, sequence: ++sequence } })
-    if (request.method === 'signalExecution' && scenario === 'pty-exit-after-delivery') { event('execution.signal_delivered', { sequence, target_process_id: 12345 }); terminal(); return }
+    if (request.method === 'signalExecution' && scenario === 'pty-exit-after-delivery') { event('execution.signal_delivered', { sequence, target_process_id: 12345, target_process_group_id: 23456 }); terminal(); return }
     if (request.method === 'signalExecution' && scenario === 'pty-unconfirmed') { setTimeout(() => terminal(), 40); return }
-    if (request.method === 'signalExecution') { const current = sequence; setTimeout(() => event('execution.signal_delivered', { sequence: current, target_process_id: 12345 }), 80) }
+    if (request.method === 'signalExecution') { const current = sequence; setTimeout(() => event('execution.signal_delivered', { sequence: current, target_process_id: 12345, target_process_group_id: 23456 }), 80) }
     event('execution.terminal', { data: 'base64:' + Buffer.from(request.method).toString('base64') })
   } else if (request.method === 'cancelExecution') {
     send({ jsonrpc: '2.0', id: request.id, result: { accepted: true } })

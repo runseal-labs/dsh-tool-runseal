@@ -5,7 +5,7 @@ export const wrapperPath = fileURLToPath(new URL('./wrapper.cjs', import.meta.ur
 export interface ConfinedSpec {
   argv: string[]
   cwd: string
-  policy: 'read-only' | 'workspace-write'
+  policy: 'read-only' | 'workspace-write' | 'danger-full-access'
   network: 'unmanaged' | 'disabled' | 'proxy'
   timeoutMs: number
 }
@@ -16,7 +16,7 @@ export function confinedSpec(argv: readonly string[]): ConfinedSpec | undefined 
   if (argv.length !== 3) throw new Error('runseal: invalid confined argv')
   const value = JSON.parse(argv[2]!) as ConfinedSpec
   if (!Array.isArray(value.argv) || !value.argv.length || value.argv.some(arg => typeof arg !== 'string' || arg.includes('\0'))
-      || typeof value.cwd !== 'string' || !['read-only', 'workspace-write'].includes(value.policy)
+      || typeof value.cwd !== 'string' || !['read-only', 'workspace-write', 'danger-full-access'].includes(value.policy)
       || !['unmanaged', 'disabled', 'proxy'].includes(value.network)
       || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs < 1) throw new Error('runseal: invalid confinement specification')
   return value

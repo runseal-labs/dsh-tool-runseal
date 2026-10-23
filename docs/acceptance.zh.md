@@ -123,3 +123,16 @@ RPC owner 现在脱离 Windows 宿主控制台启动，隐藏窗口，并继续�
 上述审计均记录 `sandbox.enforced: true` 和 `cleanup_complete: true`，策略对应 workspace-write 或 read-only。结束后未发现 RunSeal 残留进程，工作区 `.runseal/runtime` 下无残留执行目录；全程未调用 repair、删除保护记录或提权。结果与脚本保留在 mba 的 `~/.dsh/runseal-acceptance-023/`，汇总另存于 Windows 的 `~/.dsh/runseal-preview/mba-0.2.3/results.json`。
 
 **结论：上述 macOS 原生执行链路已实测可用。** RunSeal 0.2.1 同时仍报告后端 `runseal-macos-experimental`、状态 `experimental`；本次插件验收不更改上游支持等级。不扩展声称 macOS 页面交互、PTY/PTC、其他架构、owner 本身被强杀、整个进程组被杀或机器断电已通过验收。
+
+## macOS PTY、控制通道及 owner 恢复——未发布源码预览版（2026-10-23）
+
+环境为 mba、macOS 15.7.8 arm64，通过未修改的 dsh 0.2.1-rc.2 启动器及独立验收 profile 执行，插件和 RunSeal 均使用本次修改后的源码构建。当前 npm 0.2.3 和固定下载的 RunSeal 0.2.1 二进制尚不包含该实现。未修改 dsh 源码、桌面 profile 或应用安装文件。
+
+- 最终 8 项集成验收全部通过：工作区内修改和完全权限两种模式分别验证 fd 7 控制通道取消重试（98,304 字节往返）、PTY 输入/调整尺寸/raw ETX/取消重启、前台原生 SIGINT，以及仅强杀 dsh 宿主后的清理。受限模式审计 enforced=true，完全权限为 false；宿主退出后记录 client_disconnected 和完整清理。
+- 独立强杀两次 RPC owner，两次内核资源 coalition 均为 started=exited=5、active=0。后续执行自动清除了对应注册任务、归属记录和运行目录。两个恢复者并发执行成功，同时存活的另一执行保持原 owner/子进程身份、活跃 cohort、注册任务及记录，未被误杀。
+- 注入无效的已准入 cohort 记录后，新执行被拒绝且没有 Started 事件。以 /private/tmp 为宽工作区的受限命令无法覆盖归属标记，也无法伪造同级恢复记录。恢复故意损坏的测试夹具属于故障注入复位，并非生产环境手动 repair。
+- Windows 和 macOS 严格 Clippy、格式检查通过；macOS 19 项定向单测、9 项原生一致性测试通过，后者也通过并发运行。插件 typecheck、lint、build 和 18 项 subprocess 定向测试通过。
+
+清理成功要求内核正向空集证明、封闭启动入口、绑定进程出生身份的信号、I/O 收尾及持久化恢复阶段；归属未知仍阻止执行。最终成功验收不需要 sudo、额外系统权限、常驻服务或手动 repair。结论限于本机 CLI/服务集成，未声称覆盖 macOS 页面交互、其他系统版本、断电或全部可信清理助手同时消失。
+
+mba 证据：`~/.dsh/runseal-acceptance-023/dsh-final-two-mode-acceptance.json`、`owner-hard-kill-recovery-result.json`。实现与证明边界见 RunSeal 的 `docs/security/2026-10-macos-owned-process-boundary.md`。

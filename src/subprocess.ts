@@ -131,7 +131,8 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
       pid, output: handle.stdout!, done: handle.done,
       write: async data => { revision++; await execution.write('stdin', Buffer.from(data)) },
       resize: async (cols, rows) => { dimensions(cols, rows); await execution.request('resizeExecution', { cols, rows }) },
-      inspectForeground: async () => execution.isRunning() ? { processGroupId: pid, inputWaiting: false } : undefined,
+      // POSIX jobs can leave the root group; without a native observation it is unknown.
+      inspectForeground: async () => process.platform === 'win32' && execution.isRunning() ? { processGroupId: pid, inputWaiting: false } : undefined,
       inspectActivity: async () => ({ state: 'unknown', revision }),
       signalForeground: async signal => {
         if (!execution.isRunning()) throw new Error('runseal: terminal is closing')
@@ -145,7 +146,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
         }
         if (signal !== 'SIGINT') throw new Error(`runseal: unsupported foreground signal ${signal}`)
         const target = await execution.interrupt()
-        if (target !== pid) throw new Error('runseal: interrupt target differs from terminal identity')
+        if (process.platform === 'win32' && target !== pid) throw new Error('runseal: interrupt target differs from terminal identity')
         revision++
         return target
       },
@@ -198,8 +199,9 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
           started.reject(new Error('runseal: missing native process identity')); terminate()
         } else started.resolve(event.process_id as number)
       }
-      if (event.type === 'execution.signal_delivered' && Number.isSafeInteger(event.sequence) && (event.sequence as number) > 0 && Number.isSafeInteger(event.target_process_id) && (event.target_process_id as number) > 0) {
-        delivery(event.sequence as number).resolve(event.target_process_id as number)
+      if (event.type === 'execution.signal_delivered' && Number.isSafeInteger(event.sequence) && (event.sequence as number) > 0) {
+        const target = process.platform === 'win32' ? event.target_process_id : event.target_process_group_id
+        if (Number.isSafeInteger(target) && (target as number) > 0) delivery(event.sequence as number).resolve(target as number)
       }
       if (event.type === 'execution.control' && typeof event.data === 'string' && event.data.startsWith('base64:')) control?.push(Buffer.from(event.data.slice(7), 'base64'))
       if (event.type === 'execution.stdout' || event.type === 'execution.stderr' || event.type === 'execution.terminal') {

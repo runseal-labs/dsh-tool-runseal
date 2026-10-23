@@ -29,10 +29,10 @@ describe('RunSeal subprocess lifecycle', () => {
         ?? join(process.env.LOCALAPPDATA!, 'RunSeal', 'windows-sandbox')))
     } finally { await ctx.fiber.dispose() }
   })
-  it('unwraps the sandbox spec and streams input directly over RPC', async () => {
+  it.each(['read-only', 'workspace-write', 'danger-full-access'] as const)('unwraps %s and streams input directly over RPC', async mode => {
     const ctx = await mount('echo')
     try {
-      const confined = await ctx.sandbox.confine(['unused'], { mode: 'workspace-write', workspaceRoot: process.cwd() })
+      const confined = await ctx.sandbox.confine(['unused'], { mode, workspaceRoot: process.cwd() })
       const handle = ctx.subprocess.spawn(spec({ argv: confined.argv, stdio: { stdin: 'pipe', stdout: { maxBytes: 1024 }, stderr: 'pipe' } }))
       handle.stdin!.end('你好-rpc')
       expect(await handle.done).toEqual({ exitCode: 0, signal: null })
@@ -168,7 +168,7 @@ describe('RunSeal interactive transports', () => {
     try {
       const terminal = await ctx.subprocess.spawnTerminal({ argv: ['unused'], cwd: process.cwd(), rows: 24, cols: 80,
         terminalType: 'xterm', graceMs: 1000 })
-      expect(await terminal.signalForeground('SIGINT')).toBe(12345)
+      expect(await terminal.signalForeground('SIGINT')).toBe(process.platform === 'win32' ? 12345 : 23456)
       await terminal.terminate()
     } finally { await ctx.fiber.dispose() }
   })
@@ -193,10 +193,10 @@ describe('RunSeal interactive transports', () => {
       void interrupted.then(() => { delivered = true })
       await new Promise(resolve => setTimeout(resolve, 30))
       expect(delivered).toBe(false)
-      expect(await interrupted).toBe(12345)
+      expect(await interrupted).toBe(process.platform === 'win32' ? 12345 : 23456)
       await expect(terminal.signalForeground('SIGKILL')).rejects.toThrow('refusing')
       expect(await terminal.inspectActivity()).toMatchObject({ state: 'unknown' })
-      expect(await terminal.inspectForeground()).toEqual({ processGroupId: 12345, inputWaiting: false })
+      expect(await terminal.inspectForeground()).toEqual(process.platform === 'win32' ? { processGroupId: 12345, inputWaiting: false } : undefined)
       expect(terminal.pid).toBe(12345)
       await expect.poll(() => output).toContain('你好' + 'A'.repeat(20000) + 'B'.repeat(20000) + 'resizeExecutionsignalExecution')
       expect(await terminal.signalForeground('SIGTERM')).toBe(12345)

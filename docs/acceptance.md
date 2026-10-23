@@ -123,3 +123,16 @@ Key audit records:
 These audits all recorded `sandbox.enforced: true` and `cleanup_complete: true`, with workspace-write or read-only as applicable. No RunSeal processes or execution directories under the workspace's `.runseal/runtime` remained. No repair, gate deletion or elevation was used. Scripts and evidence remain under `~/.dsh/runseal-acceptance-023/` on mba; a results copy is retained at `~/.dsh/runseal-preview/mba-0.2.3/results.json` on Windows.
 
 **The macOS native execution paths above are verified working.** RunSeal 0.2.1 still reports backend `runseal-macos-experimental` and status `experimental`; plugin acceptance does not change that upstream support classification. This does not claim validation of macOS UI interaction, PTY/PTC, other architectures, killing the owner itself or an entire process group, or power loss.
+
+## macOS PTY, control and owner recovery — unreleased source preview (2026-10-23)
+
+Tested on mba, macOS 15.7.8 arm64, through the unmodified dsh 0.2.1-rc.2 launcher and an isolated acceptance profile. The plugin and RunSeal were built from the modified source. This is not evidence that the published npm 0.2.3 / RunSeal 0.2.1 binaries contain this implementation. No dsh source, desktop profile or installed application files were changed.
+
+- All eight final integration cases passed: workspace-write and danger-full-access each exercised fd 7 control cancellation/retry (98,304-byte round trips), PTY input/resize/raw ETX cancellation/retry, native foreground SIGINT, and hard-killing only the dsh host. Audits retained enforced=true for restricted execution and false for explicit full access; host loss ended with client_disconnected and complete cleanup.
+- Independent RPC-owner hard-kill probes observed both resource coalitions at started=exited=5, active=0. Subsequent admission removed the registered jobs, ownership records and runtime roots automatically. Two recovery contenders completed successfully while another live execution retained its original owner/child identities, active cohort, job and record.
+- An invalid admitted cohort record blocked admission without a Started event. A restricted command with a broad /private/tmp workspace could neither overwrite the ownership marker nor forge a sibling recovery record. Restoring the deliberately corrupted fixture was a test reset, not a production repair path.
+- Windows and macOS strict Clippy and formatting checks passed; macOS passed 19 focused unit tests and nine native conformance tests (also run concurrently). Plugin typecheck, lint, build and 18 focused subprocess tests passed.
+
+The implementation requires positive kernel emptiness evidence, sealed launch admission, birth-bound signalling, joined I/O and durable recovery phases before reporting cleanup. Unknown ownership remains blocked. No sudo, additional system permission, persistent service or manual repair was needed for the successful final acceptance runs. This covers the tested CLI/service integration, not macOS page interaction, other OS versions, power loss or simultaneous loss of every trusted cleanup helper.
+
+Evidence on mba: `~/.dsh/runseal-acceptance-023/dsh-final-two-mode-acceptance.json` and `owner-hard-kill-recovery-result.json`. Architecture and proof boundaries are documented in RunSeal's `docs/security/2026-10-macos-owned-process-boundary.md`.
