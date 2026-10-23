@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it } from 'vitest'
@@ -17,6 +18,17 @@ function spec(extra: Partial<SubprocessSpawnSpec> = {}): SubprocessSpawnSpec {
 }
 
 describe('RunSeal subprocess lifecycle', () => {
+  it.skipIf(process.platform !== 'win32' || !process.env.LOCALAPPDATA)('keeps host setup identity when PTC removes child profile variables', async () => {
+    const ctx = await mount('owner-env')
+    try {
+      const handle = ctx.subprocess.spawn(spec({ env: { LOCALAPPDATA: undefined, RUNSEAL_WINDOWS_SANDBOX_HOME: undefined } }))
+      expect((await handle.done).exitCode).toBe(0)
+      const data = JSON.parse(handle.collected.stdout!.readFrom(0).text)
+      expect(data.local).toBeUndefined()
+      expect(data.home).toBe(resolve(process.env.RUNSEAL_WINDOWS_SANDBOX_HOME
+        ?? join(process.env.LOCALAPPDATA!, 'RunSeal', 'windows-sandbox')))
+    } finally { await ctx.fiber.dispose() }
+  })
   it('unwraps the sandbox spec and streams input directly over RPC', async () => {
     const ctx = await mount('echo')
     try {
@@ -169,6 +181,10 @@ describe('RunSeal interactive transports', () => {
       let output = ''
       terminal.output.on('data', chunk => { output += chunk.toString() })
       signal.abort() // Allocation cancellation no longer owns the published terminal.
+      // Browser Ctrl-C arrives as PTY input, not signalForeground(). Preserve ETX
+      // so the console's processed/raw input mode determines its meaning.
+      await terminal.write('\x03')
+      await expect.poll(() => output).toBe('\x03')
       await terminal.write('你好')
       await Promise.all([terminal.write('A'.repeat(20000)), terminal.write('B'.repeat(20000))])
       await terminal.resize(100, 30)

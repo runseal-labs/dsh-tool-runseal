@@ -130,6 +130,21 @@ subprocess provider 识别本插件生成的 wrapper argv，直接向 RunSeal �
 
 本轮验证了公开 npm 包及其自动下载的发布二进制，运行环境是已完成配置的 Windows 主机；不代表首次 Windows setup、macOS/Linux 运行验证或新增文件隔离边界测试。页面轮核对了页面状态与进程清理，未单独读取协议终态审计记录。截图 `web-0.2.1-config.png` 和 `web-0.2.1-cancel-retry.png` 保存在本机验收输出目录，未纳入仓库。
 
+## 页面终端策略与 PTC 补验（本地修复，2026-10-23）
+
+上游页面终端直接调用 `spawnTerminal()`，未附带 confinement。插件现在对携带 `DSH_SESSION_ID` 和 `shellActivity` 的终端解析当前会话策略，在创建受限终端前封装沙箱；会话或策略服务缺失时拒绝启动。策略在终端创建时确定，切换权限模式后须关闭并重新创建终端。匿名 subprocess 保持原有行为。
+
+PTC 会主动移除子进程的用户配置环境变量。插件单独固定 RPC owner 使用的 Windows 沙箱配置目录，不恢复被移除的子进程用户目录变量或凭据。
+
+本轮 Web profile 使用本地修复 tarball 和自动下载的 RunSeal 0.2.1 二进制；**已发布的 npm 0.2.1 尚不包含这些修复**。未修改 dsh，在“工作区内修改”模式下验证：
+
+- 页面 PTY：`isTTY: true`、输入回显、调整尺寸通过；关闭运行中的终端后，取消审计确认 `cleanup_complete: true`，新建终端输出 `PTY_RESTART_OK`。取消审计为 `sess_1a1662d9a15_8b18_0.jsonl`。
+- 页面原生 PTC：停止运行中的 `run_code`，确认取消和清理后再次执行，原始工具输出为 `PTC_CONTROL_RESTART_OK` 与 `{"sum":6}`。控制通道审计为 `sess_1a16630f7c3_7f50_0.jsonl`（取消）及 `sess_1a166329a06_a0e0_0.jsonl`（重试），均确认 enforced workspace-write。代码结果通过控制通道返回，随后 dsh 终止 worker，因此成功重试的进程审计仍记为取消且清理完成，而非退出码 0。
+
+随后用页面真实键盘输入补验 Ctrl-C。浏览器自动化的 Ctrl-C 快捷键没有生成终端输入，临时插件诊断也未记录到 ETX。用户实际按键后，raw-mode 探针输出 `BYTES:03` 和 `RAW_CTRL_C_OK`；普通 Node 进程收到 SIGINT，输出 `PAGE_SIGINT_OK` 并返回同一 shell，之后的新命令输出 `PAGE_CTRL_C_RESTART_OK`。插件记录到两次 ETX，审计 `sess_1a166385259_a450_0.jsonl` 确认 enforced workspace-write，关闭终端后清理完成。无需改写 Ctrl-C 逻辑；补充回归断言，保证 ETX 作为普通 PTY 输入原样传递，保留 raw-mode 程序的语义。
+
+诊断期间曾在测试终端仍运行时重启 dsh，留下执行保护记录。经明确授权，官方管理员修复清除了两条预留记录和一个临时运行目录，报告不可检查进程为 0、无未验证运行目录。最后先正常关闭终端、确认清理，再重启 dsh；临时诊断已移除。这不代表强制终止宿主后可以无需修复自动恢复。不扩展声称文件系统边界或其他平台验证通过。
+
 ## 开发
 
 ```bash

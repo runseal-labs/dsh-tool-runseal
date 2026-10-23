@@ -1,7 +1,7 @@
 /** RPC-owned subprocesses: never place the RunSeal owner inside dsh's kill range. */
 import { constants } from 'node:fs'
 import { access, stat, realpath } from 'node:fs/promises'
-import { delimiter, extname, isAbsolute, resolve } from 'node:path'
+import { delimiter, extname, isAbsolute, resolve, join } from 'node:path'
 import { Duplex, PassThrough, Writable } from 'node:stream'
 import type { Context } from '@deepseek-ai/cordis'
 import { SubprocessRuntime, SubprocessExecutableNotFoundError, scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -9,6 +9,7 @@ import type { SubprocessHandle, SubprocessOutcome, SubprocessSpawnSpec, Subproce
 import { OutputCollector, prepareManagedProcessBinding } from '@deepseek-ai/dsh-subprocess-local/output'
 import { SUBPROCESS_CONTROL_ENV, SUBPROCESS_CONTROL_FD } from '@deepseek-ai/dsh-subprocess/control'
 import { confinedSpec } from './confinement.ts'
+import { confineSessionTerminal } from './terminal-policy.ts'
 import { RpcError, RunsealRpcClient } from './rpc-client.ts'
 import type { RpcErrorData } from './rpc-client.ts'
 import type { ResolvedEngineConfig } from './engine.ts'
@@ -108,6 +109,7 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
 
   async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
     spec.signal?.throwIfAborted()
+    spec = await confineSessionTerminal(this.ctx, spec)
     const dimensions = (cols: number, rows: number) => {
       if (![cols, rows].every(value => Number.isInteger(value) && value >= 1 && value <= 1000)) throw new Error('runseal: terminal dimensions must be from 1 to 1000')
     }
@@ -182,6 +184,13 @@ export class RunsealSubprocessRuntime extends SubprocessRuntime {
     let ioFailure: unknown
     const childEnv = { ...spec.env, ...spec.stdio.control ? { [SUBPROCESS_CONTROL_ENV]: 'pipe' } : {} }
     const env = environment(childEnv)
+    // The RPC owner uses host setup state even when a consumer clears LOCALAPPDATA.
+    // Keep the child's requested environment removal; do not restore its user profile.
+    if (process.platform === 'win32') {
+      const home = process.env.RUNSEAL_WINDOWS_SANDBOX_HOME
+        ?? (process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'RunSeal', 'windows-sandbox') : undefined)
+      if (home) env.RUNSEAL_WINDOWS_SANDBOX_HOME = resolve(home)
+    }
     const client = new RunsealRpcClient({ command: config.command, args: config.args, env, replaceEnv: true }, event => {
       if (event.execution_id !== executionId) return
       if (event.type === 'execution.started') {

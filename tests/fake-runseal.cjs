@@ -32,6 +32,11 @@ reader.on('line', line => {
       process.stdout.write(receipt.slice(17))
       if (scenario === 'pty-preparing') return
       event('execution.started', { process_id: scenario === 'pty-no-pid' ? undefined : 12345 })
+      if (scenario === 'owner-env') {
+        event('execution.stdout', { data: 'base64:' + Buffer.from(JSON.stringify({ home: process.env.RUNSEAL_WINDOWS_SANDBOX_HOME, local: process.env.LOCALAPPDATA })).toString('base64') })
+        terminal()
+        return
+      }
       if (scenario.startsWith('pty') || scenario === 'control') return
       if (['cancel', 'cancel-delayed', 'echo', 'cancel-early'].includes(scenario)) {
         if (scenario !== 'echo') event('execution.stdout', { data: 'base64:UkVBRFk=' })

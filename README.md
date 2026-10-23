@@ -130,6 +130,21 @@ In the existing conversation, with **Workspace write** selected:
 
 This acceptance used the public npm package and automatically downloaded release binary on an already configured Windows host. It does not establish first-time Windows setup, macOS/Linux runtime behavior, or new filesystem-isolation coverage. The Web round verified page state and process cleanup; it did not separately inspect protocol terminal audit records. Local screenshots are retained as `web-0.2.1-config.png` and `web-0.2.1-cancel-retry.png` under the acceptance output directory, outside the repository.
 
+## Browser terminal policy and PTC follow-up (local fix, 2026-10-23)
+
+Upstream user terminals call `spawnTerminal()` without confinement. The plugin now resolves the live session's sandbox policy for terminals carrying `DSH_SESSION_ID` and `shellActivity`, then confines restricted sessions before allocation. Missing session/policy services fail closed. Policy is captured when the terminal is created: close and recreate existing terminals after changing access mode. Anonymous subprocesses retain their existing behavior.
+
+PTC deliberately removes child profile environment variables. The plugin pins the RPC owner's Windows sandbox setup directory independently, without restoring removed child profile variables or credentials.
+
+The local Web profile used a patched tarball with the automatically downloaded RunSeal 0.2.1 binary; these fixes are **not in the published npm 0.2.1 package**. Against unmodified dsh, in Workspace write mode:
+
+- Page PTY: `isTTY: true`, input echo and resize passed; closing the active terminal cancelled execution with `cleanup_complete: true`, and a new terminal printed `PTY_RESTART_OK`. Cancellation audit: `sess_1a1662d9a15_8b18_0.jsonl`.
+- Native page PTC: stopped a running `run_code`, confirmed cancellation and cleanup, then ran code again and inspected raw output `PTC_CONTROL_RESTART_OK` and `{"sum":6}`. Control-channel audit records: `sess_1a16630f7c3_7f50_0.jsonl` (cancel) and `sess_1a166329a06_a0e0_0.jsonl` (retry). Both recorded enforced workspace-write. The successful code result travels over the control channel; dsh subsequently terminates the worker, so its process audit records cancellation and completed cleanup rather than exit code 0.
+
+Ctrl-C was subsequently verified with real keyboard input in the page. Browser automation's Ctrl-C shortcut did not generate terminal input; temporary plugin diagnostics recorded no ETX for those attempts. With the user pressing Ctrl-C, a raw-mode probe printed `BYTES:03` and `RAW_CTRL_C_OK`, and a normal Node process handled SIGINT, printed `PAGE_SIGINT_OK`, and exited back to the same shell. A subsequent command printed `PAGE_CTRL_C_RESTART_OK`. The plugin recorded both ETX bytes; audit `sess_1a166385259_a450_0.jsonl` confirmed enforced workspace-write and completed cleanup after closing the terminal. No Ctrl-C translation change was needed; a regression assertion preserves ETX as ordinary PTY input so raw-mode applications retain their semantics.
+
+During diagnosis, restarting dsh with a live test terminal left execution-gate reservations. After explicit authorization, the official elevated repair cleared two reservations and one runtime root; it reported zero uninspectable processes and no unverified runtime roots. The final terminal was closed normally and cleanup was confirmed before restarting dsh. Temporary diagnostics were removed. This does not establish forced-host-termination recovery without repair. No new filesystem-boundary or other-platform coverage is claimed.
+
 ## Development
 
 ```bash
